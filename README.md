@@ -4,7 +4,7 @@ https://www.nets-vs-automata.net/rl.html
 
 
 ToDo: 
-1) Remove CriticPattern Network to start
+1) Remove CriticPattern Network to start.
 The action to write should be made to flip (not write) one bit. 
 The agent is 1x1 not 3x3.
 2) Fix code; make Actor-Critic sound
