@@ -4,9 +4,9 @@ https://www.nets-vs-automata.net/rl.html
 
 
 ToDo: 
-1) Remove CriticPattern Network to start.
+1) Remove Actor's unnatural patternNetwork to start. Simplify to basic Actor-Critic.
 The action to write should be made to flip (not write) one bit. 
-The agent is 1x1 not 3x3.
+The agent should be made 1x1 not 3x3.
 2) Fix code; make Actor-Critic sound
 3) Practical approach:
 Log human play -> Supervised Weight Init. from human play -> RL (Like Alpha Go approach)
