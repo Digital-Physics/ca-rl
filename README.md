@@ -3,13 +3,21 @@ Reinforcement Learning excerpt from
 https://www.nets-vs-automata.net/rl.html
 
 
-ToDo: 
-1) Remove Actor's unnatural patternNetwork to start. Simplify to basic Actor-Critic.
-The action to write should be made to flip (not write) one bit. 
-The agent should be made 1x1 not 3x3.
-2) Fix code; make Actor-Critic sound
-3) Practical approach:
-Log human play -> Supervised Weight Init. from human play -> RL (Like Alpha Go approach)
+Recent Updates: 
+1) Removed Actor's unnatural patternNetwork to start. 
+
+Simplified to basic Actor-Critic.
+
+The agent now has 16 extra output nodes in the basic action network that correspond to 16 possible 2x2 write patterns.
+
+
+To do:
+
+Practical approach:
+Log human play -> Supervised Learning Weight Init. from human play -> Final stage of RL (Like Alpha Go approach of training on top Go players)
+
+
+
 
 The Recurse Center asks us to program at the edge...
 

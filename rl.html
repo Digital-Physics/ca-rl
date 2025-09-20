@@ -457,7 +457,7 @@
                         
                         <!-- Pattern Section -->
                         <div class="pattern-section" style="display: flex; align-items: center; gap: 10px;">
-                            <div id="patternCanvas" class="pattern-display" style="width: 77px; height: 77px; border: 2px solid #333; position: relative; background: #fff;"></div>
+                            <div id="patternCanvas" class="pattern-display" style="width: 52px; height: 52px; border: 2px solid #333; position: relative; background: #fff;"></div>
                             <button class="action-btn write-btn" id="writeBtn" style="background: #FF5722; padding: 8px 12px;">Write</button>
                         </div>
                     </div>
@@ -519,7 +519,7 @@
                         <!-- RL Pattern Display (hidden by default) -->
                         <div class="rl-mode-only pattern-section" style="align-items: center; gap: 10px;">
                             <div id="rlPatternCanvas" class="pattern-display" 
-                                style="width: 47px; height: 47px; border: 2px solid #333; position: relative; background: #fff;">
+                                style="width: 32px; height: 32px; border: 2px solid #333; position: relative; background: #fff;">
                             </div>
                         </div>
                     </div>
@@ -573,7 +573,7 @@
                 <p></p>
 
                 <p class="intro-text">
-                The Reinforcement Learning Games are comprised of a Cellular Automata grid/torus that updates according to some rule and an RL Agent that sees globally (nxn cells) but acts locally, within a 3x3 pattern/window/filter.
+                The Reinforcement Learning Games are comprised of a Cellular Automata grid/torus that updates according to some rule and an RL Agent that sees globally (nxn cells) but acts locally, within a 2x2 pattern/window/filter.
                 </p>
 
                 <p class="intro-text">
@@ -589,12 +589,6 @@
                     <li>Current Games/Reward Functions: Choose between hitting a target, separating on/off cells, reducing entropy, increasing complexity, or maintaining stability.</li>
                     </ul>
                 </li>
-                <li>RL Actor Agent Pattern Net 🕸️:
-                    <ul>
-                    <li>Input State Tensor Shape: (n, n, 2); NxN Cellular Automata channel & NxN Agent Position channel</li> 
-                    <li>Output Pattern, 3x3 pattern, writes to CA in the event of 'Write Pattern' Action</li>
-                    </ul>
-                </li>
                 <li>RL Critic Value Net 🕸️:
                     <ul>
                     <li>Input State Tensor Shape: (n, n, 2); NxN Cellular Automata channel & NxN Agent Position channel</li> 
@@ -604,9 +598,8 @@
                 <li>Cellular Automata Environment 👾:
                     <ul>
                     <li>Multiple Rule Sets: Conway's Game of Life, Seeds, Maze, and custom rules</li>
-                    <li>The agent is overlayed on top of the CA environment but can affect it by bit flipping or writing a 3x3 pattern</li>
+                    <li>The agent is overlayed on top of the CA environment but can affect it by bit writing a 2x2 pattern</li>
                     <li>Torus topology: CA grid wraps left and right and top and bottom edges so there are no boundaries (special toroidal ConvNet padding used)</li>
-                    <li>3x3 agent action region instead of single cell</li>
                     <li>Custom CA Rules: Define your own birth/survival rules</li>
                     <li>2D-3D Toggle: Switch between flat grid and torus visualization</li> <!--Update Note: Need to update so that CA is flat 2-d image on torus, not 3-D cube cells -->
 
@@ -625,11 +618,11 @@
 
                 <p>Dev Thought: I'm still looking for interesting, tractable, bit-flipping games for the agent to play... Got some idea?</p>
                 <p>Dev Thought: Should we have multiple agents?</p>
-                <p>Dev Thought: How does this relate to neural cellular automata that 'grow' and persist images they were trained on? This is weaker and can only influence one 3x3 region at a time...</p>
+                <p>Dev Thought: How does this relate to neural cellular automata that 'grow' and persist images they were trained on? This is weaker and can only influence one 2x2 region at a time...</p>
                 <p>Dev Thought: What's the hyperparameter search plan? Or is it up to the user and give them control of the learning rates, net architectures, etc.?</p>
                 <p>Dev Thought: Should we add another table to our SQL database for storing results once things are finalized? Or maybe just enable saving and loading of trained networks?</p>
                 <p>Dev Thought: What 'entropy', 'complexity', 'stability' metrics do we want? What other games/metrics do we want to optimize. Maxwell's Demon: Make left side on, right side off.</p>
-                <p>Dev Thought: Should we make it so the agents actions are not about moving, but it can just affect one 3x3 region at a time?</p>
+                <p>Dev Thought: Should we make it so the agents actions are not about moving, but it can just affect one 2x2 region per step?</p>
 
             </div>
         </div>
@@ -693,12 +686,17 @@
         let policyGradientChart = null;
         let valueGradientChart = null;
         
-        const actions = ['up', 'down', 'left', 'right', 'do_nothing', 'write_pattern', ]; 
+        const actions = ['up', 'down', 'left', 'right', 'do_nothing']; 
+        // add write_0000 to write_1111 to actions
+        for (let i = 0; i < 16; i++) {
+            const binaryString = i.toString(2).padStart(4, '0');
+            actions.push(`write_${binaryString}`);
+        }
         const numActions = actions.length;
         let lastActionIdx = 0;
         let shouldWritePattern = false;
 
-        let patternNetwork = null; // for generating the bit flip pattern when the write_patter action is taken
+        // let patternNetwork = null; // for generating the bit flip pattern when the write_patter action is taken
         let currentPattern = null;
         // let learnedPatternHistory = [];
 
@@ -920,15 +918,15 @@
             const rlPatternCanvas = document.getElementById('rlPatternCanvas');
             rlPatternCanvas.innerHTML = '';
 
-            for (let i = 0; i < 9; i++) {
+            for (let i = 0; i < 4; i++) {
                 const cell = document.createElement('div');
                 cell.style.position = 'absolute';
                 cell.style.width = '15px';
                 cell.style.height = '15px';
                 cell.style.border = '1px solid #666';
                 cell.style.backgroundColor = '#fff';
-                cell.style.left = ((i % 3) * 15) + 'px';
-                cell.style.top = (Math.floor(i / 3) * 15) + 'px';
+                cell.style.left = ((i % 2) * 15) + 'px';
+                cell.style.top = (Math.floor(i / 2) * 15) + 'px';
                 rlPatternCanvas.appendChild(cell);
             }
         }
@@ -937,7 +935,7 @@
             const rlPatternCanvas = document.getElementById('rlPatternCanvas');
             const cells = rlPatternCanvas.children;
             if (!currentPattern) return;
-            for (let i = 0; i < 9; i++) {
+            for (let i = 0; i < 4; i++) {
                 if (cells[i]) {
                     cells[i].style.backgroundColor = currentPattern[i] ? '#000' : '#fff';
                 }
@@ -1097,7 +1095,7 @@
             try {
                 if (policyNetwork) policyNetwork.dispose();
                 if (valueNetwork) valueNetwork.dispose();  
-                if (patternNetwork) patternNetwork.dispose();
+                // if (patternNetwork) patternNetwork.dispose();
             } catch (e) {
                 // Networks already disposed
             }
@@ -1116,34 +1114,6 @@
             policyNetwork.compile({
                 optimizer: tf.train.adam(learningRate),
                 loss: 'categoricalCrossentropy'
-            });
-
-            // Pattern network: ConvNet that outputs 3x3 pattern
-            patternNetwork = tf.sequential({
-                layers: [
-                    // tf.layers.inputLayer({ inputShape: inputShape }),
-                    tf.layers.conv2d({ 
-                        inputShape: inputShape, 
-                        filters: 16, 
-                        kernelSize: 3, 
-                        activation: 'relu',
-                        padding: 'same'
-                    }),
-                    tf.layers.conv2d({ 
-                        filters: 32, 
-                        kernelSize: 3, 
-                        activation: 'relu',
-                        padding: 'same'
-                    }),
-                    tf.layers.flatten(),
-                    tf.layers.dense({ units: 64, activation: 'relu' }),
-                    tf.layers.dense({ units: 9, activation: 'sigmoid' }) // 3x3 = 9 outputs
-                ]
-            });
-            
-            patternNetwork.compile({
-                optimizer: tf.train.adam(learningRate),
-                loss: 'binaryCrossentropy'
             });
 
             // Value network: ConvNet that outputs V(s)
@@ -1334,7 +1304,7 @@
                     // Dispose old networks if they exist
                     if (policyNetwork) policyNetwork.dispose();
                     if (valueNetwork) valueNetwork.dispose();
-                    if (patternNetwork) patternNetwork.dispose();
+                    // if (patternNetwork) patternNetwork.dispose();
                     
                     // Reinitialize networks with new state size
                     initializeActorCritic();
@@ -1355,7 +1325,7 @@
             document.getElementById('leftBtn').addEventListener('click', () => executeManualAction(2));
             document.getElementById('rightBtn').addEventListener('click', () => executeManualAction(3));
             document.getElementById('passBtn').addEventListener('click', () => executeManualAction(4));
-            document.getElementById('writeBtn').addEventListener('click', () => executeManualAction(5));
+            document.getElementById('writeBtn').addEventListener('click', () => executeManualAction());
 
             document.addEventListener('keydown', function(event) {
                 console.log("keydown", event);
@@ -1387,6 +1357,7 @@
                         action = 4; // do nothing (advance CA)
                         event.preventDefault();
                         break;
+                    // update g to analyze pattern in UI to figure out index 5-20
                     case 'g':
                     case 'G':
                         action = 5; // write pattern
@@ -1404,15 +1375,29 @@
             initializeRlPatternCanvas();
         }
 
-        function executeManualAction(action) {
+        function executeManualAction(action = null) {
             if (currentMode !== 'manual') return;
             
             const state = getState();
             
             // For write action, use the manual pattern interface pattern
-            if (action === 5) {
+            // if (action === 5) {
+            //     if (!currentPattern) {
+            //         currentPattern = new Array(9).fill(0);
+            //     }
+            // }
+            if (!action) {
                 if (!currentPattern) {
-                    currentPattern = new Array(9).fill(0);
+                    currentPattern = new Array(4).fill(0);
+                } else {
+                    // extract from currentPattern the implicit action number from 5-20
+                    // First, convert the binary array 'currentPattern' (e.g., [1,1,1,1])
+                    // to its integer equivalent (e.g., 15).
+                    const patternValue = parseInt(currentPattern.join(''), 2);
+
+                    // The write patterns start at index 5 of the 'actions' array, so we add 5
+                    // to the pattern's integer value to get the correct action index.
+                    action = patternValue + 5;
                 }
             }
             
@@ -1424,7 +1409,8 @@
                 // state: caGrid.map(row => [...row]), // shallow copy of CA state
                 state: getState().arraySync()[0], //n x n x 2
                 action: actions[action],
-                pattern: action === 5? currentPattern: null,
+                // pattern: action === 5? currentPattern: null,
+                pattern: action >= 5? currentPattern: null,
                 reward: reward
             });
 
@@ -1439,23 +1425,23 @@
             const patternCanvas = document.getElementById('patternCanvas');
             patternCanvas.innerHTML = '';
             
-            // Create 3x3 grid of cells
-            for (let i = 0; i < 9; i++) {
+            // Create 2x2 (not 3x3)grid of cells
+            for (let i = 0; i < 4; i++) {
                 const cell = document.createElement('div');
                 cell.style.position = 'absolute';
                 cell.style.width = '25px';
                 cell.style.height = '25px';
                 cell.style.border = '1px solid #666';
                 cell.style.backgroundColor = '#fff';
-                cell.style.left = ((i % 3) * 25) + 'px';
-                cell.style.top = (Math.floor(i / 3) * 25) + 'px';
+                cell.style.left = ((i % 2) * 25) + 'px';
+                cell.style.top = (Math.floor(i / 2) * 25) + 'px';
                 cell.style.cursor = 'pointer';
                 cell.dataset.index = i;
                 
                 // Make cells clickable for manual pattern editing
                 cell.addEventListener('click', function() {
                     const index = parseInt(this.dataset.index);
-                    if (!currentPattern) currentPattern = new Array(9).fill(0);
+                    if (!currentPattern) currentPattern = new Array(4).fill(0);
                     currentPattern[index] = 1 - currentPattern[index];
                     updatePatternDisplay();
                 });
@@ -1464,7 +1450,7 @@
             }
             
             // Initialize pattern
-            currentPattern = new Array(9).fill(0);
+            currentPattern = new Array(4).fill(0);
             updatePatternDisplay();
         }
 
@@ -1474,7 +1460,7 @@
             
             if (!currentPattern) return;
             
-            for (let i = 0; i < 9; i++) {
+            for (let i = 0; i < 4; i++) {
                 if (cells[i]) {
                     cells[i].style.backgroundColor = currentPattern[i] ? '#000' : '#fff';
                 }
@@ -1790,12 +1776,12 @@
                     }
                 }
                 
-                // Update agent position - now shows 3x3 region
+                // Update agent position - now shows 2x2 (not 3x3)region
                 const agentOverlay = document.getElementById('agentOverlay');
                 agentOverlay.style.left = ((agentX - 1) * cellSize) + 'px';
                 agentOverlay.style.top = ((agentY - 1) * cellSize) + 'px';
-                agentOverlay.style.width = (3 * cellSize) + 'px';
-                agentOverlay.style.height = (3 * cellSize) + 'px';
+                agentOverlay.style.width = (2 * cellSize) + 'px';
+                agentOverlay.style.height = (2 * cellSize) + 'px';
             }
             
             // Update stats
@@ -1995,16 +1981,16 @@
             currentValueEstimate = value.dataSync()[0];
             
             // Get pattern from pattern network
-            const patternProbs = patternNetwork.predict(state);
-            const patternData = patternProbs.dataSync();
-            currentPattern = Array.from(patternData).map(p => p > 0.5 ? 1 : 0);
+            // const patternProbs = patternNetwork.predict(state);
+            // const patternData = patternProbs.dataSync();
+            // currentPattern = Array.from(patternData).map(p => p > 0.5 ? 1 : 0);
             
             const action = weightedRandomChoice(probsData);
             
             // Cleanup
             probs.dispose();
             value.dispose();
-            patternProbs.dispose();
+            // patternProbs.dispose();
             
             return action;
         }
@@ -2024,7 +2010,27 @@
             const oldEntropy = calculateEntropy();
             const oldComplexity = calculateComplexity();
             
+            // Instead of state 5, I want 16 additional actions that define writePattern = [[0, 0], [0, 0]] through [[1, 1], [1, 1]] and keep the shouldWritePattern = true
             // Move agent based on action
+            // switch (action) {
+            //     case 0: // up
+            //         agentY = (agentY - 1 + gridSize) % gridSize; // Torus wrapping
+            //         break;
+            //     case 1: // down
+            //         agentY = (agentY + 1) % gridSize; // Torus wrapping
+            //         break;
+            //     case 2: // left
+            //         agentX = (agentX - 1 + gridSize) % gridSize; // Torus wrapping
+            //         break;
+            //     case 3: // right
+            //         agentX = (agentX + 1) % gridSize; // Torus wrapping
+            //         break;
+            //     case 4: // do nothing
+            //         break;
+            //     case 5: // write learned pattern
+            //         shouldWritePattern = true;
+            //         break;
+            // }
             switch (action) {
                 case 0: // up
                     agentY = (agentY - 1 + gridSize) % gridSize; // Torus wrapping
@@ -2040,11 +2046,27 @@
                     break;
                 case 4: // do nothing
                     break;
-                case 5: // write learned pattern
-                    shouldWritePattern = true;
+                // Cases 5 through 20 handle writing one of the 16 possible 2x2 binary patterns.
+                default:
+                    if (action >= 5 && action <= 20) {
+                        shouldWritePattern = true;
+                        // The action number (minus 5) corresponds to a 4-bit number
+                        // that defines the 2x2 pattern.
+                        const patternIndex = action - 5; // An integer from 0 to 15
+                        
+                        // Convert the patternIndex to a 2x2 binary matrix using bitwise operations.
+                        // For example, action 5 -> patternIndex 0 (binary 0000) -> [[0,0],[0,0]]
+                        // For example, action 20 -> patternIndex 15 (binary 1111) -> [[1,1],[1,1]]
+                        const p00 = (patternIndex >> 3) & 1; // Top-left
+                        const p01 = (patternIndex >> 2) & 1; // Top-right
+                        const p10 = (patternIndex >> 1) & 1; // Bottom-left
+                        const p11 = patternIndex & 1;        // Bottom-right
+                        
+                        currentPattern = [p00, p01, p10, p11];
+                    }
                     break;
             }
-            
+
             // Calculate reward based on game mode
             const rewardType = document.getElementById('rewardType').value;
             
@@ -2098,19 +2120,19 @@
             return reward;
         }
 
-        function writeLearnedPattern() {
-            // Add null check
-            if (!currentPattern || currentPattern.length !== 9) {
+        function writePattern() {
+            // instead of a separate learned pattern network, write a pattern based on one of the last 2**4=16 neurons in the action network is sampled.
+            if (!currentPattern || currentPattern.length !== 4) {
                 console.warn("Invalid pattern, skipping write operation");
                 return;
             }
 
-            // Apply the learned 3x3 pattern at agent position
-            for (let i = 0; i < 3; i++) {
-                for (let j = 0; j < 3; j++) {
+            // Apply the 2x2 pattern at agent position
+            for (let i = 0; i < 2; i++) {
+                for (let j = 0; j < 2; j++) {
                     const x = (agentX + j - 1 + gridSize) % gridSize;
                     const y = (agentY + i - 1 + gridSize) % gridSize;
-                    const patternIdx = i * 3 + j;
+                    const patternIdx = i * 2 + j;
                     caGrid[y][x] = currentPattern[patternIdx];
                 }
             }
@@ -2175,7 +2197,8 @@
             caGrid = newGrid;
 
             if (shouldWritePattern) {
-                writeLearnedPattern();
+                // writeLearnedPattern();
+                writePattern();
                 updateRlPatternDisplay();
                 shouldWritePattern = false;
             }
@@ -2472,39 +2495,40 @@
             await optimizer.minimize(f);
             optimizer.dispose();
 
-            if (action === 5) { // If write pattern action was taken
-                // Use advantage as feedback for pattern network training
-                // Positive advantage = good pattern, negative advantage = bad pattern
+            // If one of the 16 write pattern action was taken we will just reinforce those firing action neurons, not in a separate way
+            // if (action >= 5) { 
+            //     // Use advantage as feedback for pattern network training
+            //     // Positive advantage = good pattern, negative advantage = bad pattern
                 
-                // Create target pattern based on advantage
-                let targetPattern;
-                if (advantage > 0) {
-                    // Reinforce current pattern if advantage is positive
-                    targetPattern = tf.tensor2d([currentPattern.map(x => x)]);
-                } else {
-                    // If advantage is negative, target opposite of current pattern
-                    targetPattern = tf.tensor2d([currentPattern.map(x => 1 - x)]);
-                }
+            //     // Create target pattern based on advantage
+            //     let targetPattern;
+            //     if (advantage > 0) {
+            //         // Reinforce current pattern if advantage is positive
+            //         targetPattern = tf.tensor2d([currentPattern.map(x => x)]);
+            //     } else {
+            //         // If advantage is negative, target opposite of current pattern
+            //         targetPattern = tf.tensor2d([currentPattern.map(x => 1 - x)]);
+            //     }
                 
-                // Scale learning based on advantage magnitude
-                const patternLearningRate = Math.abs(advantage) * 0.01; // Update Note: do we want hard coded learning rates?
-                const patternOptimizer = tf.train.adam(patternLearningRate);
+            //     // Scale learning based on advantage magnitude
+            //     const patternLearningRate = Math.abs(advantage) * 0.01; // Update Note: do we want hard coded learning rates?
+            //     const patternOptimizer = tf.train.adam(patternLearningRate);
                 
-                // const patternLoss = () => {
-                //     const pred = patternNetwork.apply(stateTensor);
-                //     return tf.losses.binaryCrossentropy(targetPattern, pred);
-                // };
-                const patternLoss = () => {
-                    const pred = patternNetwork.apply(stateTensor);
-                    return tf.metrics.binaryCrossentropy(targetPattern, pred).mean();
-                };
+            //     // const patternLoss = () => {
+            //     //     const pred = patternNetwork.apply(stateTensor);
+            //     //     return tf.losses.binaryCrossentropy(targetPattern, pred);
+            //     // };
+            //     const patternLoss = () => {
+            //         const pred = patternNetwork.apply(stateTensor);
+            //         return tf.metrics.binaryCrossentropy(targetPattern, pred).mean();
+            //     };
                                 
-                await patternOptimizer.minimize(patternLoss);
+            //     await patternOptimizer.minimize(patternLoss);
                 
-                // Cleanup
-                targetPattern.dispose();
-                patternOptimizer.dispose();
-            }
+            //     // Cleanup
+            //     targetPattern.dispose();
+            //     patternOptimizer.dispose();
+            // }
                         
             // Store gradient information
             gradientHistory.push({
@@ -2615,7 +2639,7 @@
         window.addEventListener('beforeunload', function() {
             if (policyNetwork) policyNetwork.dispose();
             if (valueNetwork) valueNetwork.dispose();
-            if (patternNetwork) patternNetwork.dispose();
+            // if (patternNetwork) patternNetwork.dispose();
         });
         
         console.log('Reinforcement Learning Cellular Automata System Initialized!');
