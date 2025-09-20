@@ -573,33 +573,33 @@
                 <p></p>
 
                 <p class="intro-text">
-                The Reinforcement Learning Games are comprised of a Cellular Automata grid/torus that updates according to some rule and an RL Agent that sees globally (nxn cells) but acts locally, within a 2x2 pattern/window/filter.
+                The Reinforcement Learning Games are comprised of a Cellular Automata grid (implicitly on a torus) that updates according to a CA rule, and an RL Agent that sees globally (nxn cells) but acts locally, within a 2x2 window.
                 </p>
 
                 <p class="intro-text">
-                Goal: An RL agent that learns to interact with cellular automata to either 1) destroy a stable 2x2 target in Game of Life, 2) reduce 'entropy' as Maxwell's Demon by separating on and off cells to the left and right 3) reduce 'entropy' by making the grid mostly on or off 4) create diverse 'complex' structures 5) maintain some balance 6) Or achieve *something*??🤔. 
+                Project goal: To create an RL agent that learns to interact on top of a cellular automata environment to play a game. Game ideas: 1) destroy a stable 2x2 target in Game of Life, 2) reduce 'entropy' as Maxwell's Demon by separating on and off cells to the left and right 3) reduce 'entropy' by making the grid mostly on or off 4) create diverse 'complex' structures 5) maintain some balance 6) Or achieve *something*??🤔. 
                 </p>
 
                 <h2><span class="emoji">🕸️ & 👾</span>RL Training Details</h2>
                 <ul class="feature-list">
                 <li>RL Actor Agent Policy Net 🕸️:
                     <ul>
-                    <li>Input State Tensor Shape: (n, n, 2); NxN Cellular Automata channel & NxN Agent Position channel</li>  
-                    <li>Output A Distribution Over 6 Actions: move Up, Down, Left, Right, Do Nothing, Write Pattern</li>
-                    <li>Current Games/Reward Functions: Choose between hitting a target, separating on/off cells, reducing entropy, increasing complexity, or maintaining stability.</li>
+                    <li>Game State Input Tensor Shape = (n, n, 2); NxN Cellular Automata channel & NxN Agent Position channel</li>  
+                    <li>Output Layer Shape (1, 21), A sample distribution Over 5 + 16 Actions: move Up, Down, Left, Right, Do Nothing, Write one of 16 2x2 patterns</li>
+                    <li>Current Games with Reward Functions (needs more consideration): Choose between hitting a target, separating on/off cells, reducing entropy, increasing complexity, or maintaining stability.</li>
                     </ul>
                 </li>
                 <li>RL Critic Value Net 🕸️:
                     <ul>
                     <li>Input State Tensor Shape: (n, n, 2); NxN Cellular Automata channel & NxN Agent Position channel</li> 
-                    <li>Output State Value Scalar Estimate of the Present Value of Rewards in State S</li>
+                    <li>Output State Value Scalar Estimate V(s), the Present Value of Rewards in State S</li>
                     </ul>
                 </li>
                 <li>Cellular Automata Environment 👾:
                     <ul>
                     <li>Multiple Rule Sets: Conway's Game of Life, Seeds, Maze, and custom rules</li>
-                    <li>The agent is overlayed on top of the CA environment but can affect it by bit writing a 2x2 pattern</li>
-                    <li>Torus topology: CA grid wraps left and right and top and bottom edges so there are no boundaries (special toroidal ConvNet padding used)</li>
+                    <li>The agent is overlaid on top of the CA environment but can affect it by writing a 2x2 pattern</li>
+                    <li>Torus topology: CA grid wraps left and right and top and bottom edges so there are no boundaries (special toroidal padding is used in the ConvNet)</li>
                     <li>Custom CA Rules: Define your own birth/survival rules</li>
                     <li>2D-3D Toggle: Switch between flat grid and torus visualization</li> <!--Update Note: Need to update so that CA is flat 2-d image on torus, not 3-D cube cells -->
 
@@ -609,7 +609,7 @@
 
                 <h2><span class="emoji">🕹️</span>Manual Play</h2>
                 <ul class="component-list">
-                <li>Choose A Game (& Study the Reward Function Using Dev Tools):
+                <li>Choose A Game:
                     <ul>
                     <li>Manual Control: Use WASD keys + Space (do nothing) + G (Write Pattern)</li>
                     </ul>
@@ -1035,7 +1035,8 @@
                     await runEpisode();
                     // Small delay between episodes for UI responsiveness
                     if (isTraining) {
-                        await new Promise(resolve => setTimeout(resolve, 100));
+                        // await new Promise(resolve => setTimeout(resolve, 100));
+                        await new Promise(resolve => setTimeout(resolve, 5));
                     }
                 }
             }
@@ -1357,10 +1358,22 @@
                         action = 4; // do nothing (advance CA)
                         event.preventDefault();
                         break;
-                    // update g to analyze pattern in UI to figure out index 5-20
                     case 'g':
                     case 'G':
-                        action = 5; // write pattern
+                        // update g to analyze pattern in UI to figure out index 5-20
+                        // action = 5; 
+                        if (!currentPattern) {
+                            currentPattern = new Array(4).fill(0);
+                        } else {
+                            // extract from currentPattern the implicit action number from 5-20
+                            // First, convert the binary array 'currentPattern' (e.g., [1,1,1,1])
+                            // to its integer equivalent (e.g., 15).
+                            const patternValue = parseInt(currentPattern.join(''), 2);
+
+                            // The write patterns start at index 5 of the 'actions' array, so we add 5
+                            // to the pattern's integer value to get the correct action index.
+                            action = patternValue + 5;
+                        }
                         break;
                 }
                 
@@ -1386,20 +1399,20 @@
             //         currentPattern = new Array(9).fill(0);
             //     }
             // }
-            if (!action) {
-                if (!currentPattern) {
-                    currentPattern = new Array(4).fill(0);
-                } else {
-                    // extract from currentPattern the implicit action number from 5-20
-                    // First, convert the binary array 'currentPattern' (e.g., [1,1,1,1])
-                    // to its integer equivalent (e.g., 15).
-                    const patternValue = parseInt(currentPattern.join(''), 2);
+            // if (action === null) {
+            //     if (!currentPattern) {
+            //         currentPattern = new Array(4).fill(0);
+            //     } else {
+            //         // extract from currentPattern the implicit action number from 5-20
+            //         // First, convert the binary array 'currentPattern' (e.g., [1,1,1,1])
+            //         // to its integer equivalent (e.g., 15).
+            //         const patternValue = parseInt(currentPattern.join(''), 2);
 
-                    // The write patterns start at index 5 of the 'actions' array, so we add 5
-                    // to the pattern's integer value to get the correct action index.
-                    action = patternValue + 5;
-                }
-            }
+            //         // The write patterns start at index 5 of the 'actions' array, so we add 5
+            //         // to the pattern's integer value to get the correct action index.
+            //         action = patternValue + 5;
+            //     }
+            // }
             
             const reward = executeAction(action);
             totalReward += reward;
@@ -2048,21 +2061,23 @@
                     break;
                 // Cases 5 through 20 handle writing one of the 16 possible 2x2 binary patterns.
                 default:
-                    if (action >= 5 && action <= 20) {
+                    if (action >= 5) {
                         shouldWritePattern = true;
                         // The action number (minus 5) corresponds to a 4-bit number
                         // that defines the 2x2 pattern.
                         const patternIndex = action - 5; // An integer from 0 to 15
                         
                         // Convert the patternIndex to a 2x2 binary matrix using bitwise operations.
-                        // For example, action 5 -> patternIndex 0 (binary 0000) -> [[0,0],[0,0]]
-                        // For example, action 20 -> patternIndex 15 (binary 1111) -> [[1,1],[1,1]]
+                        // For example, action 5 -> patternIndex 0 (binary 0000): [[0,0],[0,0]]
+                        // For example, action 20 -> patternIndex 15 (binary 1111): [[1,1],[1,1]]
                         const p00 = (patternIndex >> 3) & 1; // Top-left
                         const p01 = (patternIndex >> 2) & 1; // Top-right
                         const p10 = (patternIndex >> 1) & 1; // Bottom-left
                         const p11 = patternIndex & 1;        // Bottom-right
                         
                         currentPattern = [p00, p01, p10, p11];
+                    } else {
+                        shouldWritePattern = false;
                     }
                     break;
             }
@@ -2354,7 +2369,7 @@
                 while (isTraining) {
                     await runEpisode();
                     if (isTraining) {
-                        await new Promise(resolve => setTimeout(resolve, 500));
+                        await new Promise(resolve => setTimeout(resolve, 5));
                     }
                 }
             } else {
@@ -2375,7 +2390,7 @@
                 while (isTraining) {
                     await runEpisode();
                     if (isTraining) {
-                        await new Promise(resolve => setTimeout(resolve, 500));
+                        await new Promise(resolve => setTimeout(resolve, 5));
                     }
                 }
             }
