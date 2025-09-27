@@ -580,6 +580,63 @@ def run_demo(args):
 
     plt.subplots_adjust(right=0.75)  # make space for legend
 
+    if manual_mode:
+        print("\nManual Control Enabled (single-step):")
+        print("- Arrow Keys to move (one step per key press)")
+        print("- Spacebar to pass (do nothing)")
+        print("- Hex keys 0-9 and a-f to write 2x2 patterns (each hex value is the 4-bit pattern: top-left → top-right → bottom-left → bottom-right)")
+        print("- Focus the plot window to register keys. Each keypress advances one step.\n")
+
+        step = 0
+        while step < args.steps:
+            plt.pause(0.01)
+            if not step_requested['flag']:
+                continue
+            action = current_action
+            current_action = 4
+            step_requested['flag'] = False
+
+            next_state, _, _, _ = env.step(action)
+            state[:] = next_state
+            state = next_state
+
+            grid_img.set_data(env.ca_grid)
+            agent_patch.set_xy((env.agent_x - 1.5, env.agent_y - 1.5))
+
+            if env.has_target:
+                target_patch.set_xy((env.target_x - 0.5, env.target_y - 0.5))
+                target_patch.set_visible(True)
+            else:
+                target_patch.set_visible(False)
+
+            title_text.set_text(f"Step: {step} | Mode: Manual | Last Action: {env.actions[action]}")
+            fig.canvas.draw_idle()
+            step += 1
+
+        print("Manual demo finished.")
+        plt.show(block=True)
+    else:
+        def update(frame):
+            nonlocal state
+            action = agent.select_action(state)
+            next_state, _, _, _ = env.step(action)
+            state = next_state
+
+            grid_img.set_data(env.ca_grid)
+            agent_patch.set_xy((env.agent_x - 1.5, env.agent_y - 1.5))
+            if env.has_target:
+                target_patch.set_xy((env.target_x - 0.5, env.target_y - 0.5))
+                target_patch.set_visible(True)
+            else:
+                target_patch.set_visible(False)
+
+            title_text.set_text(f"Step: {frame} | Mode: Agent | Last Action: {env.actions[action]}")
+            return grid_img, agent_patch, target_patch, title_text
+
+        ani = animation.FuncAnimation(fig, update, frames=args.steps, interval=100, repeat=False, blit=False)
+        print("\nAgent demo running (close window to stop).")
+        plt.show()
+
 
 # --- Main Execution (unchanged argument parsing except default weights filename) ---
 if __name__ == '__main__':
