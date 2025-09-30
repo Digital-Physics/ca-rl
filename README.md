@@ -84,6 +84,18 @@ python rl_ca.py demo --reward pattern --weights ca_agent_weights_final.weights.h
 # Manual mode to try it yourself
 python rl_ca.py demo --reward pattern --weights nonexistent.weights.h5
 
+# Train with live visualization
+python rl_ca.py train --episodes 100 --live-plot --reward pattern
+
+# Create custom pattern interactively
+python rl_ca.py create_pattern --grid-size 12
+
+# Demo with custom pattern
+python rl_ca.py demo --pattern-file custom_pattern_12x12.npy --reward pattern
+
+
+
+
 The Recurse Center asks us to program at the edge...
 
 “The Edge... There is no honest way to explain it because the only people who really know where it is are the ones who have gone over. The others-the living-are those who pushed their control as far as they felt they could handle it, and then pulled back, or slowed down, or did whatever they had to when it came time to choose between Now and Later. But the edge is still Out there.”
