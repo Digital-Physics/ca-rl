@@ -25,6 +25,7 @@ class ToroidalPadding(layers.Layer):
         super(ToroidalPadding, self).__init__(**kwargs)
 
     def call(self, inputs):
+        # input dims = [batch size, height, width, channels]
         # Pad top and bottom
         top_row = inputs[:, -1:, :, :]
         bottom_row = inputs[:, :1, :, :]
@@ -48,11 +49,12 @@ class CAEnv:
     Handles the grid state, agent position, CA rules, and reward calculations.
     It provides a Gym-like interface with reset() and step() methods.
     """
-    def __init__(self, grid_size=12, initial_density=0.4, rules_name='conway', reward_type='entropy'):
+    def __init__(self, grid_size=12, initial_density=0.4, rules_name='conway', reward_type='entropy', target_pattern=None, pattern_steps=50):
         self.grid_size = grid_size
         self.initial_density = initial_density
         self.rules_name = rules_name
         self.reward_type = reward_type
+        self.pattern_steps = pattern_steps
 
         self.ca_rules = {
             'conway': {'birth': [3], 'survive': [2, 3]},
@@ -64,11 +66,90 @@ class CAEnv:
         self.actions = ['up', 'down', 'left', 'right', 'do_nothing'] + [f'write_{i:04b}' for i in range(16)]
         self.num_actions = len(self.actions)
 
+        # For pattern generation mode
+        if self.reward_type == 'pattern':
+            if target_pattern is not None:
+                self.target_pattern = target_pattern
+            else:
+                self.target_pattern = self._generate_target_pattern()
+        else:
+            self.target_pattern = None
+
         self.reset()
+
+    def _generate_target_pattern(self):
+        """Generates a target pattern by executing random actions from a blank grid."""
+        print(f"\nGenerating target pattern with {self.pattern_steps} random actions...")
+        
+        # Create a temporary environment state
+        temp_grid = np.zeros((self.grid_size, self.grid_size), dtype=np.int8)
+        temp_agent_x = self.grid_size // 2
+        temp_agent_y = self.grid_size // 2
+        
+        action_sequence = []
+        
+        for _ in range(self.pattern_steps):
+            # Sample a random action
+            action = np.random.randint(0, self.num_actions)
+            action_sequence.append(action)
+            
+            # Execute the action
+            if action == 0:  # up
+                temp_agent_y = (temp_agent_y - 1 + self.grid_size) % self.grid_size
+            elif action == 1:  # down
+                temp_agent_y = (temp_agent_y + 1) % self.grid_size
+            elif action == 2:  # left
+                temp_agent_x = (temp_agent_x - 1 + self.grid_size) % self.grid_size
+            elif action == 3:  # right
+                temp_agent_x = (temp_agent_x + 1) % self.grid_size
+            elif action == 4:  # do nothing
+                pass
+            elif action >= 5:  # write pattern
+                pattern_index = action - 5
+                bits = [(pattern_index >> 3) & 1, (pattern_index >> 2) & 1, 
+                       (pattern_index >> 1) & 1, pattern_index & 1]
+                write_pattern = np.array(bits).reshape(2, 2)
+                
+                # Write pattern
+                for i in range(2):
+                    for j in range(2):
+                        y = (temp_agent_y + i - 1 + self.grid_size) % self.grid_size
+                        x = (temp_agent_x + j - 1 + self.grid_size) % self.grid_size
+                        temp_grid[y, x] = write_pattern[i, j]
+            
+            # Update CA
+            temp_grid = self._apply_ca_rules(temp_grid)
+        
+        print(f"Target pattern generated. Action sequence: {[self.actions[a] for a in action_sequence]}")
+        print(f"Target pattern density: {np.mean(temp_grid):.3f}")
+        
+        return temp_grid.copy()
+
+    def _apply_ca_rules(self, grid):
+        """Applies CA rules to a grid and returns the new grid."""
+        new_grid = grid.copy()
+        neighbor_counts = np.zeros_like(grid)
+        
+        for i in range(-1, 2):
+            for j in range(-1, 2):
+                if i == 0 and j == 0:
+                    continue
+                neighbor_counts += np.roll(np.roll(grid, i, axis=0), j, axis=1)
+
+        birth_mask = np.isin(neighbor_counts, self.rules['birth']) & (grid == 0)
+        survive_mask = np.isin(neighbor_counts, self.rules['survive']) & (grid == 1)
+
+        new_grid.fill(0)
+        new_grid[birth_mask | survive_mask] = 1
+        
+        return new_grid
 
     def reset(self):
         """Resets the environment to an initial state."""
         if self.reward_type == 'target_practice':
+            self.ca_grid = np.zeros((self.grid_size, self.grid_size), dtype=np.int8)
+        elif self.reward_type == 'pattern':
+            # Always start with blank grid for pattern generation task
             self.ca_grid = np.zeros((self.grid_size, self.grid_size), dtype=np.int8)
         else:
             self.ca_grid = (np.random.rand(self.grid_size, self.grid_size) < self.initial_density).astype(np.int8)
@@ -136,6 +217,12 @@ class CAEnv:
                 reward += 100
                 self.ca_grid.fill(0) # Clear grid
                 self._spawn_target()
+        elif self.reward_type == 'pattern':
+            binary_cross_entropy = self._calculate_pattern_bce()
+            reward = -binary_cross_entropy
+            # Optional: Add bonus for getting very close
+            if binary_cross_entropy < 0.01:
+                reward += 10  # Bonus reward for matching target
 
         # In this environment, 'done' is always False as episodes have fixed length
         done = False
@@ -145,8 +232,8 @@ class CAEnv:
         """Updates the CA grid for one step based on the rules."""
         new_grid = self.ca_grid.copy()
         
-        # Convolve with a 3x3 kernel to get neighbor counts
-        kernel = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]])
+        # Convolve with a 3x3 kernel to get neighbor counts (update to use kernel)
+        # kernel = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]])
         neighbor_counts = np.zeros_like(self.ca_grid)
         
         for i in range(-1, 2):
@@ -182,6 +269,24 @@ class CAEnv:
         left_density = np.mean(self.ca_grid[:, :midpoint])
         right_density = np.mean(self.ca_grid[:, midpoint:])
         return np.abs(left_density - right_density) * 10
+
+    def _calculate_pattern_bce(self):
+        """Calculates Binary Cross-Entropy between current grid and target pattern."""
+        if self.target_pattern is None:
+            return 0.0
+        
+        # Flatten both grids
+        current = self.ca_grid.flatten().astype(np.float32)
+        target = self.target_pattern.flatten().astype(np.float32)
+        
+        # Add small epsilon to avoid log(0)
+        epsilon = 1e-7
+        current = np.clip(current, epsilon, 1 - epsilon)
+        
+        # Binary cross-entropy formula: -[y*log(p) + (1-y)*log(1-p)]
+        bce = -np.mean(target * np.log(current) + (1 - target) * np.log(1 - current))
+        
+        return bce
 
     def _spawn_target(self):
         self.target_x = np.random.randint(0, self.grid_size - 2)
@@ -280,7 +385,8 @@ class ActorCriticAgent:
 def train_agent(args):
     """Main training loop."""
     print("--- Starting Training ---")
-    env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward)
+    env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward, 
+                pattern_steps=args.pattern_steps)
     agent = ActorCriticAgent(
         state_shape=(args.grid_size, args.grid_size, 2),
         num_actions=env.num_actions,
@@ -352,146 +458,6 @@ def train_agent(args):
     plt.tight_layout()
     plt.show()
 
-
-# def run_demo(args):
-#     """Runs a visualization of the environment with a trained agent or manual control."""
-#     print("--- Starting Demo ---")
-#     env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward)
-#     agent = ActorCriticAgent(
-#         state_shape=(args.grid_size, args.grid_size, 2),
-#         num_actions=env.num_actions
-#     )
-    
-#     if os.path.exists(args.weights):
-#         print(f"Loading weights from {args.weights}")
-#         agent.model.load_weights(args.weights)
-#         manual_mode = False
-#     else:
-#         print(f"Weights file not found: {args.weights}. Starting in manual control mode.")
-#         manual_mode = True
-
-#     state = env.reset()
-#     fig, ax = plt.subplots()
-    
-#     # Grid, agent, and target artists
-#     grid_img = ax.imshow(env.ca_grid, cmap='binary', vmin=0, vmax=1)
-#     agent_patch = plt.Rectangle((env.agent_x - 1.5, env.agent_y - 1.5), 2, 2, 
-#                                 facecolor='none', edgecolor='cyan', linewidth=2)
-#     ax.add_patch(agent_patch)
-#     target_patch = plt.Rectangle((env.target_x - 0.5, env.target_y - 0.5), 2, 2,
-#                                  facecolor='none', edgecolor='red', linewidth=2, visible=False)
-#     ax.add_patch(target_patch)
-
-#     title_text = ax.set_title("Step: 0 | Mode: " + ("Manual" if manual_mode else "Agent"))
-#     plt.xticks([])
-#     plt.yticks([])
-
-#     # Controls
-#     current_action = 4  # default do_nothing
-#     step_requested = {'flag': False}
-
-#     # Movement: arrow keys only
-#     key_map = {
-#         'up': 0,
-#         'down': 1,
-#         'left': 2,
-#         'right': 3,
-#         ' ': 4,  # do nothing
-#     }
-#     # hex_keys = list('0123456789abcdef')
-#     hex_keys = list('0123456789abcdeg')
-
-#     def on_press(event):
-#         """Handle key presses for manual control; one key press requests a single step."""
-#         if event.key is None:
-#             return
-#         key = event.key.lower()
-#         nonlocal current_action
-
-#         if key == 'f':  # disable fullscreen
-#             return
-
-#         if key in key_map:
-#             current_action = key_map[key]
-#             step_requested['flag'] = True
-#             print(f"Manual action set to: {env.actions[current_action]}")
-#         elif key in hex_keys:
-#             pattern_index = hex_keys.index(key)
-#             current_action = 5 + pattern_index
-#             step_requested['flag'] = True
-#             print(f"Manual write pattern: {pattern_index:04b} (action {env.actions[current_action]})")
-
-#     fig.canvas.mpl_connect('key_press_event', on_press)
-
-#     # --- Legend with hex command mapping ---
-#     legend_text = (
-#         "Controls:\n"
-#         "Arrows = Move\n"
-#         "Space  = Do nothing\n"
-#         "Hex 0–f = Write 2x2 pattern\n\n"
-#         "Pattern bit order:\n"
-#         "top-left, top-right,\n"
-#         "bottom-left, bottom-right"
-#     )
-#     plt.figtext(1.02, 0.5, legend_text, va='center', fontsize=9, family='monospace')
-
-#     if manual_mode:
-#         print("\nManual Control Enabled (single-step):")
-#         print("- Arrow Keys to move (one step per key press)")
-#         print("- Spacebar to pass (do nothing)")
-#         print("- Hex keys 0-9 and a-f to write 2x2 patterns (each hex value is the 4-bit pattern: top-left → top-right → bottom-left → bottom-right)")
-#         print("- Focus the plot window to register keys. Each keypress advances one step.\n")
-
-#         step = 0
-#         while step < args.steps:
-#             plt.pause(0.01)
-#             if not step_requested['flag']:
-#                 continue
-#             action = current_action
-#             current_action = 4
-#             step_requested['flag'] = False
-
-#             next_state, _, _, _ = env.step(action)
-#             state[:] = next_state
-#             state = next_state
-
-#             grid_img.set_data(env.ca_grid)
-#             agent_patch.set_xy((env.agent_x - 1.5, env.agent_y - 1.5))
-
-#             if env.has_target:
-#                 target_patch.set_xy((env.target_x - 0.5, env.target_y - 0.5))
-#                 target_patch.set_visible(True)
-#             else:
-#                 target_patch.set_visible(False)
-
-#             title_text.set_text(f"Step: {step} | Mode: Manual | Last Action: {env.actions[action]}")
-#             fig.canvas.draw_idle()
-#             step += 1
-
-#         print("Manual demo finished.")
-#         plt.show(block=True)
-#     else:
-#         def update(frame):
-#             nonlocal state
-#             action = agent.select_action(state)
-#             next_state, _, _, _ = env.step(action)
-#             state = next_state
-
-#             grid_img.set_data(env.ca_grid)
-#             agent_patch.set_xy((env.agent_x - 1.5, env.agent_y - 1.5))
-#             if env.has_target:
-#                 target_patch.set_xy((env.target_x - 0.5, env.target_y - 0.5))
-#                 target_patch.set_visible(True)
-#             else:
-#                 target_patch.set_visible(False)
-
-#             title_text.set_text(f"Step: {frame} | Mode: Agent | Last Action: {env.actions[action]}")
-#             return grid_img, agent_patch, target_patch, title_text
-
-#         ani = animation.FuncAnimation(fig, update, frames=args.steps, interval=100, repeat=False, blit=False)
-#         print("\nAgent demo running (close window to stop).")
-#         plt.show()
-
 def run_demo(args):
     """Runs a visualization of the environment with a trained agent or manual control."""
     import matplotlib as mpl
@@ -500,7 +466,8 @@ def run_demo(args):
     mpl.rcParams['keymap.fullscreen'] = []
 
     print("--- Starting Demo ---")
-    env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward)
+    env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward,
+                pattern_steps=args.pattern_steps)
     agent = ActorCriticAgent(
         state_shape=(args.grid_size, args.grid_size, 2),
         num_actions=env.num_actions
@@ -514,23 +481,29 @@ def run_demo(args):
         print(f"Weights file not found: {args.weights}. Starting in manual control mode.")
         manual_mode = True
 
-    # # Disable default Matplotlib fullscreen toggle on 'f'
-    # plt.rcParams['keymap.fullscreen'] = []
-
     state = env.reset()
-    fig, ax = plt.subplots()
     
-    grid_img = ax.imshow(env.ca_grid, cmap='binary', vmin=0, vmax=1)
+    # Setup figure with target pattern display for 'pattern' mode
+    if env.reward_type == 'pattern':
+        fig, (ax_main, ax_target) = plt.subplots(1, 2, figsize=(12, 5))
+        ax_target.imshow(env.target_pattern, cmap='binary', vmin=0, vmax=1)
+        ax_target.set_title('Target Pattern')
+        ax_target.set_xticks([])
+        ax_target.set_yticks([])
+    else:
+        fig, ax_main = plt.subplots()
+    
+    grid_img = ax_main.imshow(env.ca_grid, cmap='binary', vmin=0, vmax=1)
     agent_patch = plt.Rectangle((env.agent_x - 1.5, env.agent_y - 1.5), 2, 2, 
                                 facecolor='none', edgecolor='cyan', linewidth=2)
-    ax.add_patch(agent_patch)
+    ax_main.add_patch(agent_patch)
     target_patch = plt.Rectangle((env.target_x - 0.5, env.target_y - 0.5), 2, 2,
                                  facecolor='none', edgecolor='red', linewidth=2, visible=False)
-    ax.add_patch(target_patch)
+    ax_main.add_patch(target_patch)
 
-    title_text = ax.set_title("Step: 0 | Mode: " + ("Manual" if manual_mode else "Agent"))
-    plt.xticks([])
-    plt.yticks([])
+    title_text = ax_main.set_title("Step: 0 | Mode: " + ("Manual" if manual_mode else "Agent"))
+    ax_main.set_xticks([])
+    ax_main.set_yticks([])
 
     current_action = 4  # do nothing
     step_requested = {'flag': False}
@@ -562,7 +535,7 @@ def run_demo(args):
 
     fig.canvas.mpl_connect('key_press_event', on_press)
 
-    # --- Legend (ensure it’s visible) ---
+    # --- Legend (ensure it's visible) ---
     legend_text = (
         "Controls:\n"
         "Arrows = Move\n"
@@ -572,13 +545,13 @@ def run_demo(args):
         "top-left, top-right,\n"
         "bottom-left, bottom-right"
     )
-    # plt.figtext(0.99, 0.5, legend_text, va='center', ha='left',
-    #             fontsize=9, family='monospace')
-    # Add legend text to the right of the plot
-    fig.subplots_adjust(right=0.7)  # make space on the right
-    fig.text(0.72, 0.5, legend_text, va='center', fontsize=9, family='monospace')
-
-    plt.subplots_adjust(right=0.75)  # make space for legend
+    
+    if env.reward_type == 'pattern':
+        fig.subplots_adjust(right=0.85)
+        fig.text(0.87, 0.5, legend_text, va='center', fontsize=9, family='monospace')
+    else:
+        fig.subplots_adjust(right=0.7)
+        fig.text(0.72, 0.5, legend_text, va='center', fontsize=9, family='monospace')
 
     if manual_mode:
         print("\nManual Control Enabled (single-step):")
@@ -596,7 +569,7 @@ def run_demo(args):
             current_action = 4
             step_requested['flag'] = False
 
-            next_state, _, _, _ = env.step(action)
+            next_state, reward, _, _ = env.step(action)
             state[:] = next_state
             state = next_state
 
@@ -609,7 +582,12 @@ def run_demo(args):
             else:
                 target_patch.set_visible(False)
 
-            title_text.set_text(f"Step: {step} | Mode: Manual | Last Action: {env.actions[action]}")
+            if env.reward_type == 'pattern':
+                bce = env._calculate_pattern_bce()
+                title_text.set_text(f"Step: {step} | Mode: Manual | Action: {env.actions[action]} | BCE: {bce:.4f}")
+            else:
+                title_text.set_text(f"Step: {step} | Mode: Manual | Last Action: {env.actions[action]}")
+            
             fig.canvas.draw_idle()
             step += 1
 
@@ -630,7 +608,12 @@ def run_demo(args):
             else:
                 target_patch.set_visible(False)
 
-            title_text.set_text(f"Step: {frame} | Mode: Agent | Last Action: {env.actions[action]}")
+            if env.reward_type == 'pattern':
+                bce = env._calculate_pattern_bce()
+                title_text.set_text(f"Step: {frame} | Mode: Agent | Action: {env.actions[action]} | BCE: {bce:.4f}")
+            else:
+                title_text.set_text(f"Step: {frame} | Mode: Agent | Last Action: {env.actions[action]}")
+            
             return grid_img, agent_patch, target_patch, title_text
 
         ani = animation.FuncAnimation(fig, update, frames=args.steps, interval=100, repeat=False, blit=False)
@@ -638,7 +621,7 @@ def run_demo(args):
         plt.show()
 
 
-# --- Main Execution (unchanged argument parsing except default weights filename) ---
+# --- Main Execution ---
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Reinforcement Learning in a Cellular Automata Environment.")
     subparsers = parser.add_subparsers(dest='mode', required=True, help='Select mode: train or demo')
@@ -650,15 +633,17 @@ if __name__ == '__main__':
     train_parser.add_argument('--lr', type=float, default=0.0001, help='Learning rate for the Adam optimizer.')
     train_parser.add_argument('--grid-size', type=int, default=12, help='Size of the CA grid (e.g., 12 for 12x12).')
     train_parser.add_argument('--rules', type=str, default='conway', choices=['conway', 'seeds', 'maze'], help='CA rule set to use.')
-    train_parser.add_argument('--reward', type=str, default='entropy', choices=['entropy', 'maxwell_demon', 'target_practice'], help='Reward function to use.')
+    train_parser.add_argument('--reward', type=str, default='entropy', choices=['entropy', 'maxwell_demon', 'target_practice', 'pattern'], help='Reward function to use.')
+    train_parser.add_argument('--pattern-steps', type=int, default=10, help='Number of random actions to generate target pattern (for pattern mode).')
 
     # --- Demo Arguments ---
     demo_parser = subparsers.add_parser('demo', help='Run a visual demonstration.')
-    demo_parser.add_argument('--weights', type=str, default='ca_agent_weights_final.h5', help='Path to saved model weights. If not found, starts in manual mode.')
+    demo_parser.add_argument('--weights', type=str, default='ca_agent_weights_final.weights.h5', help='Path to saved model weights. If not found, starts in manual mode.')
     demo_parser.add_argument('--steps', type=int, default=500, help='Number of steps to run the demo for.')
     demo_parser.add_argument('--grid-size', type=int, default=12, help='Size of the CA grid.')
     demo_parser.add_argument('--rules', type=str, default='conway', choices=['conway', 'seeds', 'maze'], help='CA rule set to use.')
-    demo_parser.add_argument('--reward', type=str, default='entropy', choices=['entropy', 'maxwell_demon', 'target_practice'], help='Reward function (affects environment setup).')
+    demo_parser.add_argument('--reward', type=str, default='entropy', choices=['entropy', 'maxwell_demon', 'target_practice', 'pattern'], help='Reward function (affects environment setup).')
+    demo_parser.add_argument('--pattern-steps', type=int, default=10, help='Number of random actions to generate target pattern (for pattern mode).')
 
     args = parser.parse_args()
 
