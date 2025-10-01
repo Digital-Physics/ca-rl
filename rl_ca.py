@@ -47,12 +47,11 @@ class CAEnv:
     Represents the Cellular Automata (CA) environment.
     """
     def __init__(self, grid_size=12, initial_density=0.4, rules_name='conway', 
-                 reward_type='entropy', target_pattern=None, pattern_steps=10):
+                 reward_type='entropy', target_pattern=None):
         self.grid_size = grid_size
         self.initial_density = initial_density
         self.rules_name = rules_name
         self.reward_type = reward_type
-        self.pattern_steps = pattern_steps
 
         self.ca_rules = {
             'conway': {'birth': [3], 'survive': [2, 3]},
@@ -71,67 +70,12 @@ class CAEnv:
             if target_pattern is not None:
                 self.target_pattern = target_pattern
             else:
-                self.target_pattern = self._generate_target_pattern()
+                # Default simple pattern if none provided
+                self.target_pattern = None
         else:
             self.target_pattern = None
 
         self.reset()
-
-    def _generate_target_pattern(self):
-        """Generates a target pattern by executing random actions from a blank grid."""
-        print(f"\nGenerating target pattern with {self.pattern_steps} random actions...")
-        
-        temp_grid = np.zeros((self.grid_size, self.grid_size), dtype=np.int8)
-        temp_agent_x = self.grid_size // 2
-        temp_agent_y = self.grid_size // 2
-        
-        action_sequence = []
-        
-        for step in range(self.pattern_steps):
-            if step < self.pattern_steps * 0.3:
-                if np.random.rand() < 0.7:
-                    action = np.random.randint(5, self.num_actions)
-                else:
-                    action = np.random.randint(0, 5)
-            else:
-                action = np.random.randint(0, self.num_actions)
-            
-            action_sequence.append(action)
-            
-            if action == 0:  # up
-                temp_agent_y = (temp_agent_y - 1 + self.grid_size) % self.grid_size
-            elif action == 1:  # down
-                temp_agent_y = (temp_agent_y + 1) % self.grid_size
-            elif action == 2:  # left
-                temp_agent_x = (temp_agent_x - 1 + self.grid_size) % self.grid_size
-            elif action == 3:  # right
-                temp_agent_x = (temp_agent_x + 1) % self.grid_size
-            elif action == 4:  # do nothing
-                pass
-            elif action >= 5:  # write pattern
-                pattern_index = action - 5
-                bits = [(pattern_index >> 3) & 1, (pattern_index >> 2) & 1, 
-                       (pattern_index >> 1) & 1, pattern_index & 1]
-                write_pattern = np.array(bits).reshape(2, 2)
-                
-                for i in range(2):
-                    for j in range(2):
-                        y = (temp_agent_y + i - 1 + self.grid_size) % self.grid_size
-                        x = (temp_agent_x + j - 1 + self.grid_size) % self.grid_size
-                        temp_grid[y, x] = write_pattern[i, j]
-            
-            if np.sum(temp_grid) > 0:
-                temp_grid = self._apply_ca_rules_fast(temp_grid)
-        
-        if np.sum(temp_grid) == 0:
-            print("Pattern was empty, forcing a glider pattern...")
-            temp_grid[temp_agent_y-1, temp_agent_x] = 1
-            temp_grid[temp_agent_y, temp_agent_x+1] = 1
-            temp_grid[temp_agent_y+1, temp_agent_x-1:temp_agent_x+2] = 1
-        
-        print(f"Target pattern generated. Density: {np.mean(temp_grid):.3f}, Live cells: {np.sum(temp_grid)}")
-        
-        return temp_grid.copy()
 
     def _apply_ca_rules_fast(self, grid):
         """Fast CA rule application using convolution."""
@@ -382,8 +326,7 @@ class ActorCriticAgent:
 def train_agent(args):
     """Main training loop with enhanced live visualization."""
     print("--- Starting Training ---")
-    env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward, 
-                pattern_steps=args.pattern_steps)
+    env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward)
     agent = ActorCriticAgent(
         state_shape=(args.grid_size, args.grid_size, 2),
         num_actions=env.num_actions,
@@ -765,8 +708,7 @@ def run_demo(args):
     mpl.rcParams['keymap.fullscreen'] = []
 
     print("--- Starting Demo ---")
-    env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward,
-                pattern_steps=args.pattern_steps)
+    env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward)
     
     # Load custom pattern if specified
     if args.pattern_file and os.path.exists(args.pattern_file):
@@ -1024,8 +966,8 @@ if __name__ == '__main__':
     train_parser.add_argument('--reward', type=str, default='entropy', 
                              choices=['entropy', 'maxwell_demon', 'target_practice', 'pattern'], 
                              help='Reward function.')
-    train_parser.add_argument('--pattern-steps', type=int, default=10, 
-                             help='Steps for target pattern generation.')
+    train_parser.add_argument('--pattern-file', type=str, default=None, 
+                            help='Load custom pattern from file for training.')
     train_parser.add_argument('--live-plot', action='store_true', 
                              help='Enable live plotting during training.')
 
@@ -1040,8 +982,6 @@ if __name__ == '__main__':
     demo_parser.add_argument('--reward', type=str, default='entropy', 
                             choices=['entropy', 'maxwell_demon', 'target_practice', 'pattern'], 
                             help='Reward function.')
-    demo_parser.add_argument('--pattern-steps', type=int, default=10, 
-                            help='Steps for target pattern generation.')
     demo_parser.add_argument('--pattern-file', type=str, default=None, 
                             help='Load custom pattern from file.')
 

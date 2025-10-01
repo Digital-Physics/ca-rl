@@ -58,8 +58,6 @@ Log human play -> Supervised Learning Weight Initialization (mimic human actions
 (Like Alpha Go approach of training on top Go players before progressing to RL phase)
 
 
-**To Train the Agent:**
-Run the script from your terminal with the `train` command. You can customize the training parameters as needed.
 
 # Train with default settings
 python rl_ca.py train
@@ -75,23 +73,26 @@ python rl_ca.py demo --weights ca_agent_weights_25.weights.h5
 # Play manually (provide no weights file)
 python rl_ca.py demo
 
-# Train an agent on pattern generation task
-python rl_ca.py train --reward pattern --pattern-steps 15 --episodes 200
 
-# Demo with trained agent
-python rl_ca.py demo --reward pattern --weights ca_agent_weights_final.weights.h5
 
-# Manual mode to try it yourself
-python rl_ca.py demo --reward pattern --weights nonexistent.weights.h5
 
-# Train with live visualization
-python rl_ca.py train --episodes 100 --live-plot --reward pattern
-
-# Create custom pattern interactively
+# Draw A Pattern Game
+# 1) First create a pattern
 python rl_ca.py create_pattern --grid-size 12
 
-# Demo with custom pattern
-python rl_ca.py demo --pattern-file custom_pattern_12x12.npy --reward pattern
+# 2) Then train with that pattern
+python rl_ca.py train --reward pattern --pattern-file custom_pattern_12x12.npy --live-plot
+
+# 3) And demo with the same pattern
+python rl_ca.py demo --reward pattern --pattern-file custom_pattern_12x12.npy --weights ca_agent_weights_final.weights.h5
+
+
+
+# Manual mode to try it yourself
+python rl_ca.py demo --reward pattern --pattern-file custom_pattern_12x12.npy --weights nonexistent.weights.h5 
+
+# Train with live visualization
+python rl_ca.py train --episodes 100 --live-plot --reward pattern --pattern-file custom_pattern_12x12.npy
 
 
 
