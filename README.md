@@ -58,7 +58,7 @@ Log human play -> Supervised Learning Weight Initialization (mimic human actions
 (Like Alpha Go approach of training on top Go players before progressing to RL phase)
 
 
-
+# Command Line Tool for RL Training & Demos
 # Train with default settings
 python rl_ca.py train
 
@@ -96,7 +96,7 @@ python rl_ca.py train --episodes 100 --live-plot --reward pattern --pattern-file
 
 
 
-
-The Recurse Center asks us to program at the edge...
+## Code Developed At Recurse Center
+The Recurse Center asks participants to program at the edge of their ability...
 
 “The Edge... There is no honest way to explain it because the only people who really know where it is are the ones who have gone over. The others-the living-are those who pushed their control as far as they felt they could handle it, and then pulled back, or slowed down, or did whatever they had to when it came time to choose between Now and Later. But the edge is still Out there.”
