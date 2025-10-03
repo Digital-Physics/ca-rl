@@ -510,9 +510,12 @@ def train_agent(args):
         advantages.append(ep_metrics['advantage'] / args.steps)
         entropies.append(ep_metrics['entropy'] / args.steps)
         td_errors.append(ep_metrics['td_error'] / args.steps)
-        alive_cells.append(ep_metrics['alive'] / args.steps)
-        density_values.append(ep_metrics['density'] / args.steps)
-        policy_entropies.append(ep_metrics['policy_entropy'] / args.steps)
+        # alive_cells.append(ep_metrics['alive'] / args.steps)
+        # density_values.append(ep_metrics['density'] / args.steps)
+        # policy_entropies.append(ep_metrics['policy_entropy'] / args.steps)
+        alive_cells.append(float(ep_metrics['alive'] / args.steps))
+        density_values.append(float(ep_metrics['density'] / args.steps))
+        policy_entropies.append(float(ep_metrics['policy_entropy'] / args.steps))
 
         # Update live plot
         if args.live_plot and (episode + 1) % 5 == 0:
@@ -571,6 +574,7 @@ def train_agent(args):
         'density_values': density_values,
         'policy_entropies': policy_entropies
     }
+    print(metrics_data)
     with open('training_metrics.json', 'w') as f:
         json.dump(metrics_data, f)
     print("Training metrics saved to training_metrics.json")
