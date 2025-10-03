@@ -57,10 +57,87 @@ Log human play -> Supervised Learning Weight Initialization (mimic human actions
 
 (Like Alpha Go approach of training on top Go players before progressing to RL phase)
 
+```
+ca-rl v0.1.0
+├── matplotlib v3.10.6
+│   ├── contourpy v1.3.3
+│   │   └── numpy v2.3.3
+│   ├── cycler v0.12.1
+│   ├── fonttools v4.60.1
+│   ├── kiwisolver v1.4.9
+│   ├── numpy v2.3.3
+│   ├── packaging v25.0
+│   ├── pillow v11.3.0
+│   ├── pyparsing v3.2.5
+│   └── python-dateutil v2.9.0.post0
+│       └── six v1.17.0
+├── numpy v2.3.3
+├── scipy v1.16.2
+│   └── numpy v2.3.3
+├── tensorflow v2.20.0
+│   ├── absl-py v2.3.1
+│   ├── astunparse v1.6.3
+│   │   ├── six v1.17.0
+│   │   └── wheel v0.45.1
+│   ├── flatbuffers v25.9.23
+│   ├── gast v0.6.0
+│   ├── google-pasta v0.2.0
+│   │   └── six v1.17.0
+│   ├── grpcio v1.75.1
+│   │   └── typing-extensions v4.15.0
+│   ├── h5py v3.14.0
+│   │   └── numpy v2.3.3
+│   ├── keras v3.11.3
+│   │   ├── absl-py v2.3.1
+│   │   ├── h5py v3.14.0 (*)
+│   │   ├── ml-dtypes v0.5.3
+│   │   │   └── numpy v2.3.3
+│   │   ├── namex v0.1.0
+│   │   ├── numpy v2.3.3
+│   │   ├── optree v0.17.0
+│   │   │   └── typing-extensions v4.15.0
+│   │   ├── packaging v25.0
+│   │   └── rich v14.1.0
+│   │       ├── markdown-it-py v4.0.0
+│   │       │   └── mdurl v0.1.2
+│   │       └── pygments v2.19.2
+│   ├── libclang v18.1.1
+│   ├── ml-dtypes v0.5.3 (*)
+│   ├── numpy v2.3.3
+│   ├── opt-einsum v3.4.0
+│   ├── packaging v25.0
+│   ├── protobuf v6.32.1
+│   ├── requests v2.32.5
+│   │   ├── certifi v2025.8.3
+│   │   ├── charset-normalizer v3.4.3
+│   │   ├── idna v3.10
+│   │   └── urllib3 v2.5.0
+│   ├── setuptools v80.9.0
+│   ├── six v1.17.0
+│   ├── tensorboard v2.20.0
+│   │   ├── absl-py v2.3.1
+│   │   ├── grpcio v1.75.1 (*)
+│   │   ├── markdown v3.9
+│   │   ├── numpy v2.3.3
+│   │   ├── packaging v25.0
+│   │   ├── pillow v11.3.0
+│   │   ├── protobuf v6.32.1
+│   │   ├── setuptools v80.9.0
+│   │   ├── tensorboard-data-server v0.7.2
+│   │   └── werkzeug v3.1.3
+│   │       └── markupsafe v3.0.3
+│   ├── termcolor v3.1.0
+│   ├── typing-extensions v4.15.0
+│   └── wrapt v1.17.3
+└── tqdm v4.67.1
+```
 
 # Command Line Tool for RL Training & Demos
 # Train with default settings
 python rl_ca.py train
+
+# if you're using uv
+uv run rl_ca.py train
 
 # Train for more episodes with a different game mode
 python rl_ca.py train --episodes 200 --reward maxwell_demon --grid-size 16
