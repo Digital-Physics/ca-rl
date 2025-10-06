@@ -163,7 +163,7 @@ python rl_ca.py train --reward pattern --pattern-file custom_pattern_12x12.npy -
 # 3) And demo with the same pattern
 python rl_ca.py demo --reward pattern --pattern-file custom_pattern_12x12.npy --weights ca_agent_weights_final.weights.h5
 
-
+uv run rl_ca.py demo --reward pattern --pattern-file custom_pattern_12x12.npy --weights ca_agent_weights_final.weights.h5
 
 # Manual mode to try it yourself
 python rl_ca.py demo --reward pattern --pattern-file custom_pattern_12x12.npy --weights nonexistent.weights.h5 
@@ -171,7 +171,7 @@ python rl_ca.py demo --reward pattern --pattern-file custom_pattern_12x12.npy --
 # Train with live visualization
 python rl_ca.py train --episodes 100 --live-plot --reward pattern --pattern-file custom_pattern_12x12.npy
 
-
+uv run rl_ca.py train --episodes 100 --live-plot --reward pattern --pattern-file custom_pattern_12x12.npy
 
 ## Code Developed At Recurse Center
 The Recurse Center asks participants to program at the edge of their ability...

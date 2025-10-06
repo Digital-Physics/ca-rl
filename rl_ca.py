@@ -1,3 +1,5 @@
+import matplotlib
+matplotlib.use('TkAgg') 
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
@@ -13,6 +15,9 @@ import os
 import time
 from collections import deque
 import json
+
+# Enable interactive mode once for drawing some images during training
+plt.ion()
 
 # Suppress TensorFlow logging
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -282,9 +287,55 @@ class ActorCriticAgent:
         value = value.numpy()[0, 0]
         return action_probs, value
 
+    # @tf.function
+    # def train_step(self, state, action, reward, next_state, done):
+    #     """Performs a single training step with entropy regularization."""
+    #     with tf.GradientTape() as tape:
+    #         action_logits, state_value = self.model(state)
+    #         _, next_state_value = self.model(next_state)
+
+    #         # Critic loss
+    #         state_value = tf.squeeze(state_value)
+    #         next_state_value = tf.squeeze(next_state_value)
+
+    #         td_target = reward + self.gamma * next_state_value * (1 - tf.cast(done, tf.float32))
+    #         advantage = td_target - state_value
+    #         critic_loss = self.huber_loss(tf.expand_dims(td_target, 0), tf.expand_dims(state_value, 0))
+
+    #         # Actor loss with entropy regularization
+    #         action_indices = tf.stack([tf.range(state.shape[0], dtype=tf.int32), tf.cast(action, tf.int32)], axis=1)
+    #         log_probs = tf.nn.log_softmax(action_logits)
+    #         action_log_probs = tf.gather_nd(log_probs, action_indices)
+            
+    #         # Entropy bonus for exploration
+    #         action_probs = tf.nn.softmax(action_logits)
+    #         entropy = -tf.reduce_sum(action_probs * log_probs, axis=-1)
+            
+    #         actor_loss = -action_log_probs * tf.stop_gradient(advantage) - self.entropy_coef * entropy
+
+    #         total_loss = actor_loss + critic_loss
+
+    #     grads = tape.gradient(total_loss, self.model.trainable_variables)
+    #     self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
+        
+    #     # Return metrics for monitoring
+    #     return {
+    #         'actor_loss': actor_loss,
+    #         'critic_loss': critic_loss,
+    #         'advantage': advantage,
+    #         'entropy': entropy,
+    #         'td_error': tf.abs(advantage)
+    #     }
+
     @tf.function
     def train_step(self, state, action, reward, next_state, done):
-        """Performs a single training step with entropy regularization."""
+        """
+        Performs a single training step (Actor-Critic) with Advantage Clipping.
+        Entropy regularization is removed.
+        """
+        # Define clipping range
+        ADVANTAGE_CLIP = 5.0
+        
         with tf.GradientTape() as tape:
             action_logits, state_value = self.model(state)
             _, next_state_value = self.model(next_state)
@@ -295,31 +346,43 @@ class ActorCriticAgent:
 
             td_target = reward + self.gamma * next_state_value * (1 - tf.cast(done, tf.float32))
             advantage = td_target - state_value
+            
+            # Critic loss (using Huber Loss)
+            # NOTE: tf.expand_dims is likely only needed if self.huber_loss expects a batched input.
             critic_loss = self.huber_loss(tf.expand_dims(td_target, 0), tf.expand_dims(state_value, 0))
 
-            # Actor loss with entropy regularization
+            # Actor loss
             action_indices = tf.stack([tf.range(state.shape[0], dtype=tf.int32), tf.cast(action, tf.int32)], axis=1)
             log_probs = tf.nn.log_softmax(action_logits)
             action_log_probs = tf.gather_nd(log_probs, action_indices)
             
-            # Entropy bonus for exploration
-            action_probs = tf.nn.softmax(action_logits)
-            entropy = -tf.reduce_sum(action_probs * log_probs, axis=-1)
+            # >>> ADDED: Advantage Clipping <<<
+            clipped_advantage = tf.clip_by_value(advantage, 
+                                                 clip_value_min=-ADVANTAGE_CLIP, 
+                                                 clip_value_max=ADVANTAGE_CLIP)
             
-            actor_loss = -action_log_probs * tf.stop_gradient(advantage) - self.entropy_coef * entropy
+            # >>> MODIFIED: Removed Entropy Regularization <<<
+            # The advantage is now clipped (and we stop the gradient).
+            actor_loss = -action_log_probs * tf.stop_gradient(clipped_advantage)
 
             total_loss = actor_loss + critic_loss
 
         grads = tape.gradient(total_loss, self.model.trainable_variables)
         self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
         
+        # We need to recalculate entropy and td_error for monitoring, 
+        # as they are no longer calculated as part of the total_loss gradient.
+        # Recalculate entropy for monitoring (it's not used in the loss anymore)
+        action_probs = tf.nn.softmax(action_logits)
+        entropy = -tf.reduce_sum(action_probs * log_probs, axis=-1)
+        
         # Return metrics for monitoring
         return {
             'actor_loss': actor_loss,
             'critic_loss': critic_loss,
-            'advantage': advantage,
+            'advantage': clipped_advantage, # Return the clipped value for monitoring
             'entropy': entropy,
-            'td_error': tf.abs(advantage)
+            'td_error': tf.abs(advantage) # TD error uses the unclipped advantage
         }
 
 # Are there too many graphs being created
@@ -453,6 +516,8 @@ def train_agent(args):
         ax_policy_entropy.set_ylabel('H(π)')
         ax_policy_entropy.grid(True, alpha=0.3)
 
+        plt.pause(0.1)
+        
     for episode in range(args.episodes):
         state = env.reset()
         episode_reward = 0.0
@@ -552,6 +617,7 @@ def train_agent(args):
                 ax.relim()
                 ax.autoscale_view()
             
+            fig.canvas.draw()   # <-- Add this line to force a redraw
             plt.pause(0.01)
 
         # Save model weights periodically
@@ -656,8 +722,10 @@ def train_agent(args):
     
     plt.tight_layout()
     plt.savefig('training_results.png', dpi=150, bbox_inches='tight')
+    plt.close('all')
     print("Final plot saved to training_results.png")
     plt.show()
+    # plt.close('all')
 
 
 def interactive_pattern_creator(args):
@@ -703,7 +771,9 @@ def interactive_pattern_creator(args):
     fig.canvas.mpl_connect('button_press_event', on_click)
     fig.canvas.mpl_connect('key_press_event', on_key)
     
-    plt.show()
+    # plt.show()
+    plt.pause(0.001)
+    plt.close('all')
 
 
 def run_demo(args):
@@ -882,6 +952,7 @@ def run_demo(args):
 
         print("Manual demo finished.")
         plt.show(block=True)
+        # plt.close('all')
     else:
         def update(frame):
             nonlocal state
@@ -948,7 +1019,9 @@ def run_demo(args):
         ani = animation.FuncAnimation(fig, update, frames=args.steps, 
                                      interval=100, repeat=False, blit=False)
         print("\nAgent demo running (close window to stop).")
-        plt.show()
+        # plt.show()
+        plt.show(block=True) # <-- Make this call blocking
+        # plt.close('all')
 
 
 # --- Main Execution ---
@@ -961,7 +1034,7 @@ if __name__ == '__main__':
     train_parser = subparsers.add_parser('train', help='Run the training loop.')
     train_parser.add_argument('--episodes', type=int, default=100, help='Number of training episodes.')
     train_parser.add_argument('--steps', type=int, default=200, help='Number of steps per episode.')
-    train_parser.add_argument('--lr', type=float, default=0.0001, help='Learning rate.')
+    train_parser.add_argument('--lr', type=float, default=0.00005, help='Learning rate.')
     train_parser.add_argument('--entropy-coef', type=float, default=0.01, 
                              help='Entropy regularization coefficient.')
     train_parser.add_argument('--grid-size', type=int, default=12, help='Size of the CA grid.')
