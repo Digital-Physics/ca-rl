@@ -147,7 +147,6 @@ This will save the model weights (e.g., `ca_agent_weights_final.h5`) in the same
 # Watch the trained agent play or 
 python rl_ca.py demo --weights ca_agent_weights_25.weights.h5
 
-
 # Draw A Pattern Game
 # 1) First create a pattern
 python rl_ca.py create_pattern --grid-size 12

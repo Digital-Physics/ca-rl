@@ -162,9 +162,11 @@ class CAEnv:
                 self._spawn_target()
         elif self.reward_type == 'pattern':
             binary_cross_entropy = self._calculate_pattern_bce()
+            # print("bce", binary_cross_entropy)
             reward = -binary_cross_entropy
-            if binary_cross_entropy < 0.01:
-                reward += 10
+            # print("reward (-bce)", reward)
+            # if binary_cross_entropy < 0.01:
+            #     reward += 10
 
         done = False
         return self._get_state(), reward, done, {}
@@ -799,6 +801,7 @@ def run_demo(args):
         num_actions=env.num_actions
     )
     
+    # --- Determine Mode and Load Weights ---
     if os.path.exists(args.weights):
         print(f"Loading weights from {args.weights}")
         agent.model.load_weights(args.weights)
@@ -809,28 +812,46 @@ def run_demo(args):
 
     state = env.reset()
     
-    # Setup figure with enhanced visualizations
+    # --- Setup Dynamic Figure Layout ---
     if env.reward_type == 'pattern':
+        # 2 Rows, 4 Columns total
         fig = plt.figure(figsize=(16, 6))
         gs = fig.add_gridspec(2, 4, hspace=0.3, wspace=0.3)
-        ax_main = fig.add_subplot(gs[:, 0])
-        ax_target = fig.add_subplot(gs[:, 1])
-        ax_probs = fig.add_subplot(gs[0, 2:])
-        ax_value = fig.add_subplot(gs[1, 2])
-        ax_metrics = fig.add_subplot(gs[1, 3])
+        ax_main = fig.add_subplot(gs[:, 0]) # CA Grid (2 rows wide)
+        ax_target = fig.add_subplot(gs[:, 1]) # Target Pattern (2 rows wide)
+        ax_probs = fig.add_subplot(gs[0, 2:]) # Action Probs (top row, 2 columns wide)
         
+        if not manual_mode:
+            # Agent Mode: V(s) and Metrics get one spot each
+            ax_value = fig.add_subplot(gs[1, 2])
+            ax_metrics = fig.add_subplot(gs[1, 3])
+        else:
+            # Manual Mode: Metrics span both spots
+            ax_value = None # V(s) axis is not created
+            ax_metrics = fig.add_subplot(gs[1, 2:]) # Metrics spans 2 columns
+            
         ax_target.imshow(env.target_pattern, cmap='binary', vmin=0, vmax=1)
         ax_target.set_title('Target Pattern')
         ax_target.set_xticks([])
         ax_target.set_yticks([])
-    else:
+        
+    else: # No Pattern Reward
+        # 2 Rows, 3 Columns total
         fig = plt.figure(figsize=(16, 6))
         gs = fig.add_gridspec(2, 3, hspace=0.3, wspace=0.3)
-        ax_main = fig.add_subplot(gs[:, 0])
-        ax_probs = fig.add_subplot(gs[0, 1:])
-        ax_value = fig.add_subplot(gs[1, 1])
-        ax_metrics = fig.add_subplot(gs[1, 2])
-    
+        ax_main = fig.add_subplot(gs[:, 0]) # CA Grid (2 rows wide)
+        ax_probs = fig.add_subplot(gs[0, 1:]) # Action Probs (top row, 2 columns wide)
+        
+        if not manual_mode:
+            # Agent Mode: V(s) and Metrics get one spot each
+            ax_value = fig.add_subplot(gs[1, 1])
+            ax_metrics = fig.add_subplot(gs[1, 2])
+        else:
+            # Manual Mode: Metrics spans both spots
+            ax_value = None # V(s) axis is not created
+            ax_metrics = fig.add_subplot(gs[1, 1:]) # Metrics spans 2 columns
+
+
     # Main grid display
     grid_img = ax_main.imshow(env.ca_grid, cmap='binary', vmin=0, vmax=1)
     agent_patch = plt.Rectangle((env.agent_x - 1.5, env.agent_y - 1.5), 2, 2, 
@@ -849,7 +870,7 @@ def run_demo(args):
         action_probs, state_value = agent.get_action_probs_and_value(state)
     else:
         action_probs = np.ones(env.num_actions) / env.num_actions
-        state_value = 0.0
+        state_value = 0.0 # This value is still needed for bar chart init but won't be displayed
     
     bars = ax_probs.bar(range(env.num_actions), action_probs, color='steelblue', alpha=0.7)
     ax_probs.set_ylim([0, 1])
@@ -859,16 +880,19 @@ def run_demo(args):
     ax_probs.set_title('Action Distribution')
     ax_probs.grid(axis='y', alpha=0.3)
     
-    # Value function display
-    value_text = ax_value.text(0.5, 0.5, f'V(s) = {state_value:.3f}', 
-                               ha='center', va='center', fontsize=20, 
-                               bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
-    ax_value.set_xlim([0, 1])
-    ax_value.set_ylim([0, 1])
-    ax_value.set_title('State Value (Critic)')
-    ax_value.axis('off')
-    
-    # Additional metrics
+    # Value function display (Only created/set up if in Agent Mode)
+    value_text = None
+    if not manual_mode:
+        value_text = ax_value.text(0.5, 0.5, f'V(s) = {state_value:.3f}', 
+                                   ha='center', va='center', fontsize=20, 
+                                   bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
+        ax_value.set_xlim([0, 1])
+        ax_value.set_ylim([0, 1])
+        ax_value.set_title('State Value (Critic)')
+        ax_value.axis('off')
+
+    # Additional metrics setup
+    # This remains visible and now takes up the space from V(s) in manual mode
     metrics_text = ax_metrics.text(0.1, 0.9, '', va='top', fontsize=10, family='monospace')
     ax_metrics.set_xlim([0, 1])
     ax_metrics.set_ylim([0, 1])
@@ -939,6 +963,7 @@ def run_demo(args):
             alive_count = np.sum(env.ca_grid)
             density = np.mean(env.ca_grid)
             
+            # --- Metrics String (Only non-V(s) metrics included) ---
             metrics_str = f"Step: {step}\n"
             metrics_str += f"Action: {env.actions[action]}\n"
             metrics_str += f"Reward: {reward:.3f}\n"
@@ -958,8 +983,8 @@ def run_demo(args):
 
         print("Manual demo finished.")
         plt.show(block=True)
-        # plt.close('all')
     else:
+        # AGENT MODE (V(s) is visible)
         def update(frame):
             nonlocal state
             action = agent.select_action(state)
@@ -967,7 +992,9 @@ def run_demo(args):
             
             # Get current metrics
             action_probs, state_value = agent.get_action_probs_and_value(state)
-            entropy = -np.sum(action_probs * np.log(action_probs + 1e-10))
+            # Clip probabilities to avoid log(0) issues
+            clipped_probs = np.clip(action_probs, 1e-10, 1.0) 
+            entropy = -np.sum(clipped_probs * np.log(clipped_probs))
             
             value_history.append(state_value)
             entropy_history.append(entropy)
@@ -993,7 +1020,7 @@ def run_demo(args):
                 else:
                     bar.set_color('steelblue')
             
-            # Update value display
+            # Update value display (V(s) is guaranteed to be created here)
             value_text.set_text(f'V(s) = {state_value:.3f}')
             
             # Update metrics
@@ -1025,10 +1052,7 @@ def run_demo(args):
         ani = animation.FuncAnimation(fig, update, frames=args.steps, 
                                      interval=100, repeat=False, blit=False)
         print("\nAgent demo running (close window to stop).")
-        # plt.show()
-        plt.show(block=True) # <-- Make this call blocking
-        # plt.close('all')
-
+        plt.show(block=True)
 
 # --- Main Execution ---
 if __name__ == '__main__':
