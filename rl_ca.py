@@ -496,7 +496,8 @@ def train_agent(args):
         agent_patch = plt.Rectangle((env.agent_x - 1.5, env.agent_y - 1.5), 2, 2,
                                     facecolor='none', edgecolor='cyan', linewidth=2)
         ax_grid.add_patch(agent_patch)
-        ax_grid.set_title(f"Live State", fontweight='bold')
+        # ax_grid.set_title(f"Live State", fontweight='bold')
+        title_text = ax_grid.set_title("Episode 0 | Step 0", fontweight='bold')
         ax_grid.set_xticks([])
         ax_grid.set_yticks([])
 
@@ -593,6 +594,7 @@ def train_agent(args):
                 for bar, prob in zip(bars, action_probs):
                     bar.set_height(prob)
                 value_text.set_text(f'V(s) = {current_value_viz:.3f}')
+                title_text.set_text(f"Episode {episode + 1} | Step {step + 1} | Reward: {episode_reward:.3f}")
                 fig.canvas.draw()
                 plt.pause(0.01)
 
