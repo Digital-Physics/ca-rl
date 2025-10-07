@@ -429,7 +429,6 @@ def supervised_pretrain(args):
     agent.model.save_weights(args.save_weights)
     print(f"Saved final supervised weights to {args.save_weights}")
 
-
 def train_agent(args):
     """Main training loop with enhanced live visualization and metrics."""
     print("--- Starting Training ---")
@@ -466,46 +465,11 @@ def train_agent(args):
     avg_state_values = [] 
 
     # Setup live plotting if enabled
-    if args.live_plot:
+    if args.live_plot is not None:
         plt.ion()
-        # Adjusted layout: 3 rows x 4 columns
-        fig = plt.figure(figsize=(20, 15))
-        # New GridSpec: 4 rows x 4 columns, but now Row 4 only has 2 plots, then empty space
-        gs = fig.add_gridspec(4, 4, hspace=0.4, wspace=0.35)
-        
-        # Row 1: CA grid, Target Pattern, Action Probabilities, Value Display
-        ax_grid = fig.add_subplot(gs[0, 0])
-        
-        # ADDED TARGET PATTERN LOGIC
-        if env.reward_type == 'pattern' and env.target_pattern is not None:
-            ax_target = fig.add_subplot(gs[0, 1])
-            ax_probs = fig.add_subplot(gs[0, 2])
-            ax_value_display = fig.add_subplot(gs[0, 3])
-        else:
-            ax_target = None
-            ax_probs = fig.add_subplot(gs[0, 1:3])
-            ax_value_display = fig.add_subplot(gs[0, 3])
-            
-        # Row 2: Training metrics (Reward, Losses, Entropy, TD Error)
-        ax_reward = fig.add_subplot(gs[1, 0])
-        ax_loss = fig.add_subplot(gs[1, 1])
-        ax_entropy_metric = fig.add_subplot(gs[1, 2])
-        ax_td = fig.add_subplot(gs[1, 3])
-        
-        # Row 3: More metrics (Advantage, Density, Policy Entropy, Avg V(s))
-        ax_advantage = fig.add_subplot(gs[2, 0])
-        ax_density = fig.add_subplot(gs[2, 1]) 
-        ax_policy_entropy = fig.add_subplot(gs[2, 2]) 
-        ax_avg_value = fig.add_subplot(gs[2, 3]) # ADDED
-        
-        # Row 4: Empty (3x3 grid makes a cleaner layout now)
-        # We will use a 3x4 grid spec for better spacing now that grad norm is gone.
-        # Rerunning GridSpec for cleaner 3x4 layout:
-        plt.close(fig) # Close the old figure
-        fig = plt.figure(figsize=(18, 14)) # Slightly smaller, more compact
+        fig = plt.figure(figsize=(18, 14))
         gs = fig.add_gridspec(3, 4, hspace=0.4, wspace=0.35)
         
-        # Row 1: CA grid, Target Pattern, Action Probabilities, Value Display
         ax_grid = fig.add_subplot(gs[0, 0])
         if env.reward_type == 'pattern' and env.target_pattern is not None:
             ax_target = fig.add_subplot(gs[0, 1])
@@ -516,37 +480,32 @@ def train_agent(args):
             ax_probs = fig.add_subplot(gs[0, 1:3])
             ax_value_display = fig.add_subplot(gs[0, 3])
             
-        # Row 2: Training metrics (Reward, Losses, Entropy, TD Error)
         ax_reward = fig.add_subplot(gs[1, 0])
         ax_loss = fig.add_subplot(gs[1, 1])
         ax_entropy_metric = fig.add_subplot(gs[1, 2])
         ax_td = fig.add_subplot(gs[1, 3])
         
-        # Row 3: More metrics (Advantage, Density, Policy Entropy, Avg V(s))
         ax_advantage = fig.add_subplot(gs[2, 0])
         ax_density = fig.add_subplot(gs[2, 1]) 
         ax_policy_entropy = fig.add_subplot(gs[2, 2]) 
-        ax_avg_value = fig.add_subplot(gs[2, 3]) # ADDED
+        ax_avg_value = fig.add_subplot(gs[2, 3])
         
         fig.suptitle('Training Progress (Live)', fontsize=16, fontweight='bold')
         
-        # Setup CA grid visualization
         grid_img = ax_grid.imshow(env.ca_grid, cmap='binary', vmin=0, vmax=1, interpolation='nearest')
         agent_patch = plt.Rectangle((env.agent_x - 1.5, env.agent_y - 1.5), 2, 2,
                                     facecolor='none', edgecolor='cyan', linewidth=2)
         ax_grid.add_patch(agent_patch)
-        ax_grid.set_title(f"Last State In Episode", fontweight='bold')
+        ax_grid.set_title(f"Live State", fontweight='bold')
         ax_grid.set_xticks([])
         ax_grid.set_yticks([])
 
-        # Setup Target Pattern Visualization (NEW)
         if ax_target is not None:
             ax_target.imshow(env.target_pattern, cmap='binary', vmin=0, vmax=1, interpolation='nearest')
             ax_target.set_title('Target Pattern', fontweight='bold')
             ax_target.set_xticks([])
             ax_target.set_yticks([])
 
-        # Setup action probability bars
         action_labels = ['↑', '↓', '←', '→', '○'] + [f'{i:X}' for i in range(16)]
         bars = ax_probs.bar(range(env.num_actions), np.zeros(env.num_actions), 
                             color='steelblue', alpha=0.7)
@@ -554,19 +513,17 @@ def train_agent(args):
         ax_probs.set_xticks(range(env.num_actions))
         ax_probs.set_xticklabels(action_labels, fontsize=8)
         ax_probs.set_ylabel('Probability')
-        ax_probs.set_title('Action Distribution (Last State)', fontweight='bold')
+        ax_probs.set_title('Action Distribution (Current State)', fontweight='bold')
         ax_probs.grid(axis='y', alpha=0.3)
         
-        # Setup value function display (UPDATED)
         value_text = ax_value_display.text(0.5, 0.5, 'V(s) = 0.000',
                                    ha='center', va='center', fontsize=18,
                                    bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
         ax_value_display.set_xlim([0, 1])
         ax_value_display.set_ylim([0, 1])
-        ax_value_display.set_title('State Value (Critic) - Last Step', fontweight='bold')
+        ax_value_display.set_title('State Value (Critic)', fontweight='bold')
         ax_value_display.axis('off')
         
-        # Setup metric plots
         lines = {
             'reward': ax_reward.plot([], [], 'b-', linewidth=2)[0],
             'actor_loss': ax_loss.plot([], [], 'r-', label='Actor', linewidth=2)[0],
@@ -576,90 +533,47 @@ def train_agent(args):
             'advantage': ax_advantage.plot([], [], 'purple', linewidth=2)[0],
             'density': ax_density.plot([], [], 'darkgreen', linewidth=2)[0],
             'policy_entropy': ax_policy_entropy.plot([], [], 'crimson', linewidth=2)[0],
-            'avg_value': ax_avg_value.plot([], [], 'dodgerblue', linewidth=2)[0], # ADDED
+            'avg_value': ax_avg_value.plot([], [], 'dodgerblue', linewidth=2)[0],
         }
         
-        # --- Axis Titles and Setup ---
         ax_reward.set_title('Total Reward per Episode', fontweight='bold')
-        ax_reward.set_xlabel('Episode')
-        ax_reward.set_ylabel('Total Reward')
         ax_reward.grid(True, alpha=0.3)
-        
         ax_loss.set_title('Losses', fontweight='bold')
-        ax_loss.set_xlabel('Episode')
-        ax_loss.set_ylabel('Loss')
         ax_loss.legend()
         ax_loss.grid(True, alpha=0.3)
-        
         ax_entropy_metric.set_title('Training Entropy (A2C)', fontweight='bold')
-        ax_entropy_metric.set_xlabel('Episode')
-        ax_entropy_metric.set_ylabel('Entropy')
         ax_entropy_metric.grid(True, alpha=0.3)
-        
         ax_td.set_title('TD Error', fontweight='bold')
-        ax_td.set_xlabel('Episode')
-        ax_td.set_ylabel('|TD Error|')
         ax_td.grid(True, alpha=0.3)
-        
         ax_advantage.set_title('Average Advantage', fontweight='bold')
-        ax_advantage.set_xlabel('Episode')
-        ax_advantage.set_ylabel('Advantage')
         ax_advantage.grid(True, alpha=0.3)
-        
         ax_density.set_title('Grid Density', fontweight='bold')
-        ax_density.set_xlabel('Episode')
-        ax_density.set_ylabel('Density')
         ax_density.grid(True, alpha=0.3)
-        
         ax_policy_entropy.set_title('Policy Entropy (H(π))', fontweight='bold')
-        ax_policy_entropy.set_xlabel('Episode')
-        ax_policy_entropy.set_ylabel('H(π)')
         ax_policy_entropy.grid(True, alpha=0.3)
-        
-        ax_avg_value.set_title('Average State Value (V(s))', fontweight='bold') # ADDED
-        ax_avg_value.set_xlabel('Episode')
-        ax_avg_value.set_ylabel('Avg V(s)')
+        ax_avg_value.set_title('Average State Value (V(s))', fontweight='bold')
         ax_avg_value.grid(True, alpha=0.3)
-
         plt.pause(0.1)
 
     for episode in range(args.episodes):
         state = env.reset()
         episode_reward = 0.0
-        ep_metrics = {
-            'actor_loss': 0.0,
-            'critic_loss': 0.0,
-            'advantage': 0.0,
-            'entropy': 0.0,
-            'td_error': 0.0,
-            'density': 0.0,
-            'policy_entropy': 0.0,
-            'state_value': 0.0, 
-        }
+        ep_metrics = {'actor_loss': 0.0, 'critic_loss': 0.0, 'advantage': 0.0, 'entropy': 0.0, 'td_error': 0.0, 'density': 0.0, 'policy_entropy': 0.0, 'state_value': 0.0}
 
         pbar = tqdm(range(args.steps), desc=f"Episode {episode + 1}/{args.episodes}")
         for step in pbar:
             action = agent.select_action(state)
             next_state, reward, done, _ = env.step(action)
             
-            metrics = agent.train_step(
-                state,
-                np.array([action]),
-                np.array([reward], dtype=np.float32),
-                next_state,
-                np.array([done])
-            )
+            metrics = agent.train_step(state, np.array([action]), np.array([reward], dtype=np.float32), next_state, np.array([done]))
             
-            # Calculate policy entropy and value for current state
             action_probs_current, current_value = agent.get_action_probs_and_value(state)
-            # Clip probabilities to avoid log(0)
             action_probs_current = np.clip(action_probs_current, 1e-10, 1.0) 
             policy_entropy = -np.sum(action_probs_current * np.log(action_probs_current))
 
             state = next_state
             episode_reward += float(reward)
             
-            # Accumulate metrics
             ep_metrics['actor_loss'] += float(metrics['actor_loss'].numpy())
             ep_metrics['critic_loss'] += float(metrics['critic_loss'].numpy())
             ep_metrics['advantage'] += float(metrics['advantage'].numpy())
@@ -668,16 +582,21 @@ def train_agent(args):
             ep_metrics['density'] += np.mean(env.ca_grid)
             ep_metrics['policy_entropy'] += policy_entropy
             ep_metrics['state_value'] += current_value 
-            print(episode)
+            
+            pbar.set_postfix({'Reward': f'{episode_reward:.2f}', 'Entropy': f'{ep_metrics["entropy"] / (step + 1):.3f}', 'Value': f'{current_value:.2f}'})
 
-            pbar.set_postfix({
-                'Reward': f'{episode_reward:.2f}',
-                'Entropy': f'{ep_metrics["entropy"] / (step + 1):.3f}',
-                'Value': f'{current_value:.2f}' 
-            })
+            # Visualize agent/grid state on every step if live_plot is 0
+            if args.live_plot == 0:
+                grid_img.set_data(env.ca_grid)
+                agent_patch.set_xy((env.agent_x - 1.5, env.agent_y - 1.5))
+                action_probs, current_value_viz = agent.get_action_probs_and_value(state)
+                for bar, prob in zip(bars, action_probs):
+                    bar.set_height(prob)
+                value_text.set_text(f'V(s) = {current_value_viz:.3f}')
+                fig.canvas.draw()
+                plt.pause(0.01)
 
-        # Store episode metrics
-        total_rewards.append(episode_reward) # This corrects the total reward plot
+        total_rewards.append(episode_reward)
         actor_losses.append(ep_metrics['actor_loss'] / args.steps)
         critic_losses.append(ep_metrics['critic_loss'] / args.steps)
         advantages.append(ep_metrics['advantage'] / args.steps)
@@ -685,48 +604,49 @@ def train_agent(args):
         td_errors.append(ep_metrics['td_error'] / args.steps)
         density_values.append(float(ep_metrics['density'] / args.steps))
         policy_entropies.append(float(ep_metrics['policy_entropy'] / args.steps))
-        avg_state_values.append(float(ep_metrics['state_value'] / args.steps)) # ADDED
+        avg_state_values.append(float(ep_metrics['state_value'] / args.steps))
         
-        # Update live plot (modify mod frequency with print frequency desire)
-        if args.live_plot and (episode + 1) % 5 == 0:
-            episodes_range = range(1, episode + 2)
-            
-            # Update grid and agent position
-            grid_img.set_data(env.ca_grid)
-            agent_patch.set_xy((env.agent_x - 1.5, env.agent_y - 1.5))
-            
-            # Get current action probs and value (using the last state)
-            action_probs, current_value = agent.get_action_probs_and_value(state)
-            
-            # Update action probability bars
-            for bar, prob in zip(bars, action_probs):
-                bar.set_height(prob)
-            
-            # Update value display (NEW AXIS)
-            value_text.set_text(f'V(s) = {current_value:.3f}')
-            
-            # Update all metric lines
-            lines['reward'].set_data(episodes_range, total_rewards)
-            lines['actor_loss'].set_data(episodes_range, actor_losses)
-            lines['critic_loss'].set_data(episodes_range, critic_losses)
-            lines['entropy'].set_data(episodes_range, entropies)
-            lines['td_error'].set_data(episodes_range, td_errors)
-            lines['advantage'].set_data(episodes_range, advantages)
-            lines['density'].set_data(episodes_range, density_values)
-            lines['policy_entropy'].set_data(episodes_range, policy_entropies)
-            lines['avg_value'].set_data(episodes_range, avg_state_values) # ADDED
-            
-            # Rescale all axes
-            for ax in [ax_reward, ax_loss, ax_entropy_metric, ax_td, 
-                       ax_advantage, ax_density, ax_policy_entropy, 
-                       ax_avg_value]: # UPDATED list of axes
-                ax.relim()
-                ax.autoscale_view()
-            
-            fig.canvas.draw()
-            plt.pause(0.01)
+        # --- MODIFIED SECTION ---
+        # Update metric graphs at the end of the episode based on frequency.
+        # This now triggers every episode for `live_plot == 0` or every N episodes for `live_plot > 0`.
+        if args.live_plot is not None:
+            update_this_episode = False
+            if args.live_plot == 0:
+                update_this_episode = True
+            elif args.live_plot > 0 and (episode + 1) % args.live_plot == 0:
+                update_this_episode = True
 
-        # Save model weights periodically
+            if update_this_episode:
+                episodes_range = range(1, episode + 2)
+                
+                # Also update the agent view to show the final state of the episode
+                grid_img.set_data(env.ca_grid)
+                agent_patch.set_xy((env.agent_x - 1.5, env.agent_y - 1.5))
+                action_probs, current_value_viz = agent.get_action_probs_and_value(state)
+                for bar, prob in zip(bars, action_probs):
+                    bar.set_height(prob)
+                value_text.set_text(f'V(s) = {current_value_viz:.3f}')
+
+                # Update all metric graphs
+                lines['reward'].set_data(episodes_range, total_rewards)
+                lines['actor_loss'].set_data(episodes_range, actor_losses)
+                lines['critic_loss'].set_data(episodes_range, critic_losses)
+                lines['entropy'].set_data(episodes_range, entropies)
+                lines['td_error'].set_data(episodes_range, td_errors)
+                lines['advantage'].set_data(episodes_range, advantages)
+                lines['density'].set_data(episodes_range, density_values)
+                lines['policy_entropy'].set_data(episodes_range, policy_entropies)
+                lines['avg_value'].set_data(episodes_range, avg_state_values)
+
+                # Rescale all graph axes
+                for ax in [ax_reward, ax_loss, ax_entropy_metric, ax_td, ax_advantage, ax_density, ax_policy_entropy, ax_avg_value]:
+                    ax.relim()
+                    ax.autoscale_view()
+
+                fig.canvas.draw()
+                plt.pause(0.01)
+        # --- END OF MODIFIED SECTION ---
+
         if (episode + 1) % 25 == 0:
             agent.model.save_weights(f'ca_agent_weights_{episode+1}.weights.h5')
             print(f"\nSaved weights at episode {episode+1}")
@@ -734,96 +654,52 @@ def train_agent(args):
     agent.model.save_weights('ca_agent_weights_final.weights.h5')
     print("\n--- Training Complete ---")
     
-    # Save training metrics
-    metrics_data = {
-        'rewards': total_rewards,
-        'actor_losses': actor_losses,
-        'critic_losses': critic_losses,
-        'advantages': advantages,
-        'entropies': entropies,
-        'td_errors': td_errors,
-        'density_values': density_values,
-        'policy_entropies': policy_entropies,
-        'avg_state_values': avg_state_values,
-    }
-    
+    metrics_data = {'rewards': total_rewards, 'actor_losses': actor_losses, 'critic_losses': critic_losses, 'advantages': advantages, 'entropies': entropies, 'td_errors': td_errors, 'density_values': density_values, 'policy_entropies': policy_entropies, 'avg_state_values': avg_state_values}
     with open('training_metrics.json', 'w') as f:
         json.dump(metrics_data, f)
     print("Training metrics saved to training_metrics.json")
 
-    # Final plot (3x3 grid now)
-    if args.live_plot:
+    if args.live_plot is not None:
         plt.ioff()
     
-    plt.figure(figsize=(15, 12)) # Adjusted size for 3x3 layout
-    
-    # 1. Total Reward
+    plt.figure(figsize=(15, 12))
     plt.subplot(3, 3, 1)
     plt.plot(total_rewards, linewidth=2)
     plt.title('Total Reward per Episode', fontweight='bold')
-    plt.xlabel('Episode')
-    plt.ylabel('Total Reward')
     plt.grid(True, alpha=0.3)
     
-    # 2. Losses
     plt.subplot(3, 3, 2)
     plt.plot(actor_losses, label='Actor Loss', linewidth=2)
     plt.plot(critic_losses, label='Critic Loss', linewidth=2)
     plt.title('Average Loss per Episode', fontweight='bold')
-    plt.xlabel('Episode')
-    plt.ylabel('Loss')
     plt.legend()
     plt.grid(True, alpha=0.3)
     
-    # 3. Average Advantage
     plt.subplot(3, 3, 3)
     plt.plot(advantages, linewidth=2, color='purple')
     plt.title('Average Advantage', fontweight='bold')
-    plt.xlabel('Episode')
-    plt.ylabel('Advantage')
     plt.grid(True, alpha=0.3)
     
-    # 4. Training Entropy
     plt.subplot(3, 3, 4)
     plt.plot(entropies, linewidth=2, color='orange')
     plt.title('Training Entropy (A2C)', fontweight='bold')
-    plt.xlabel('Episode')
-    plt.ylabel('Entropy')
     plt.grid(True, alpha=0.3)
     
-    # 5. TD Error
     plt.subplot(3, 3, 5)
     plt.plot(td_errors, linewidth=2, color='brown')
     plt.title('TD Error', fontweight='bold')
-    plt.xlabel('Episode')
-    plt.ylabel('|TD Error|')
     plt.grid(True, alpha=0.3)
     
-    # 6. Grid Density (Replaced Alive Cells)
-    # plt.subplot(3, 3, 6)
-    # plt.plot(density_values, linewidth=2, color='darkgreen')
-    # plt.title('Grid Density', fontweight='bold')
-    # plt.xlabel('Episode')
-    # plt.ylabel('Density')
-    # plt.grid(True, alpha=0.3)
-    
-    # 7. Policy Entropy (H(π))
     plt.subplot(3, 3, 7)
     plt.plot(policy_entropies, linewidth=2, color='crimson')
     plt.title('Policy Entropy (H(π))', fontweight='bold')
-    plt.xlabel('Episode')
-    plt.ylabel('H(π)')
     plt.grid(True, alpha=0.3)
 
-    # 8. Average State Value (V(s)) (NEW)
     plt.subplot(3, 3, 8)
     plt.plot(avg_state_values, linewidth=2, color='dodgerblue')
     plt.title('Average State Value (V(s))', fontweight='bold')
-    plt.xlabel('Episode')
-    plt.ylabel('Avg V(s)')
     plt.grid(True, alpha=0.3)
     
-    # 9. Empty space for a cleaner layout
     plt.subplot(3, 3, 9).axis('off')
     
     plt.tight_layout()
@@ -1257,7 +1133,14 @@ if __name__ == '__main__':
     train_parser.add_argument('--rules', type=str, default='conway', choices=['conway', 'seeds', 'maze'], help='CA rule set.')
     train_parser.add_argument('--reward', type=str, default='entropy', choices=['entropy', 'maxwell_demon', 'target_practice', 'pattern'], help='Reward function.')
     train_parser.add_argument('--pattern-file', type=str, default=None, help='Load custom pattern from file for training.')
-    train_parser.add_argument('--live-plot', action='store_true', help='Enable live plotting during training.')
+    # train_parser.add_argument('--live-plot', action='store_true', help='Enable live plotting during training.')
+    train_parser.add_argument('--live-plot', type=int, nargs='?', const=5, default=None, help=(
+            'Enable live plotting. Pass an integer for episode frequency '
+            '(e.g., 1=every episode, 5=every fifth). '
+            'Use 0 to visualize every step (like demo mode).'
+        )
+    )
+
     train_parser.add_argument('--pretrained-weights', type=str, default=None, help='Optional path to pretrained weights to load before RL training (e.g. from supervised pretrain).')
 
     # --- Supervised Learning Arguments ---

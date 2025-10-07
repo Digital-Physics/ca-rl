@@ -121,11 +121,14 @@ uv run rl_ca.py supervised --data-file manual_data_1759859590.npz --epochs 40 --
 # Autonomous Demo (of supervised learning pretrained model)
 uv run rl_ca.py demo --weights supervised_pretrained.weights.h5 --reward pattern --pattern-file custom_pattern_12x12.npy
 
-# RL Training (from scratch)
-uv run rl_ca.py train --reward pattern --pattern-file custom_pattern_12x12.npy --live-plot
+# RL Training (from scratch) (and show live plots every 5 episodes)
+uv run rl_ca.py train --reward pattern --pattern-file custom_pattern_12x12.npy --live-plot 5
+
+# RL Training (from scratch) (and show every step of every episode) (slow)
+uv run rl_ca.py train --reward pattern --pattern-file custom_pattern_12x12.npy --live-plot 0
 
 # RL Training (from SL pretraining)
-uv run rl_ca.py train --pretrained-weights supervised_weights_final.weights.h5 --reward pattern --pattern-file custom_pattern_12x12.npy --live-plot
+uv run rl_ca.py train --pretrained-weights supervised_weights_final.weights.h5 --reward pattern --pattern-file custom_pattern_12x12.npy --live-plot 2
 
 # Autonomous Demo (of RL agent)
 uv run rl_ca.py demo --weights supervised_weights_final.weights.h5 --reward pattern --pattern-file custom_pattern_12x12.npy
