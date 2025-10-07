@@ -342,10 +342,93 @@ class ActorCriticAgent:
             'td_error': tf.abs(advantage) # TD error uses the unclipped advantage
         }
 
+# def supervised_pretrain(args):
+#     """
+#     Train the policy head with manually recorded (state, action) pairs.
+#     Expects a .npz file with arrays: states (N,H,W,2), actions (N,)
+#     """
+#     print("--- Supervised Pretraining ---")
+#     if not args.data_file or not os.path.exists(args.data_file):
+#         raise FileNotFoundError(f"Supervised data file not found: {args.data_file}")
+
+#     data = np.load(args.data_file)
+#     states = data['states'].astype(np.float32)
+#     actions = data['actions'].astype(np.int32)
+#     print(f"Loaded {states.shape[0]} samples from {args.data_file}")
+
+#     env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward)
+#     agent = ActorCriticAgent(
+#         state_shape=(args.grid_size, args.grid_size, 2),
+#         num_actions=env.num_actions,
+#         learning_rate=args.lr,
+#         entropy_coef=args.entropy_coef
+#     )
+
+#     # If user provides an initial weights file, load them (optional)
+#     if args.init_weights and os.path.exists(args.init_weights):
+#         print(f"Loading initial weights from {args.init_weights}")
+#         agent.model.load_weights(args.init_weights)
+
+#     # Build a Keras model to train only the policy head (logits).
+#     # We'll reuse the agent.model and compile with a policy loss.
+#     policy_loss = SparseCategoricalCrossentropy(from_logits=True)
+#     acc_metric = SparseCategoricalAccuracy()
+
+#     # We'll train by calling model.train_on_batch using tape and optimizer to keep parity with existing optimizer.
+#     batch_size = args.batch_size
+#     dataset_size = states.shape[0]
+
+#     # shuffle dataset
+#     idx = np.arange(dataset_size)
+#     np.random.shuffle(idx)
+#     states = states[idx]
+#     actions = actions[idx]
+
+#     # Training loop (simple)
+#     for epoch in range(args.epochs):
+#         epoch_loss = 0.0
+#         epoch_acc = 0.0
+#         num_batches = 0
+#         for start in range(0, dataset_size, batch_size):
+#             end = min(start + batch_size, dataset_size)
+#             batch_states = states[start:end]
+#             batch_actions = actions[start:end]
+
+#             with tf.GradientTape() as tape:
+#                 logits, _ = agent.model(batch_states, training=True)
+#                 loss_value = policy_loss(batch_actions, logits)
+#                 # optional entropy regularization to encourage softness
+#                 probs = tf.nn.softmax(logits)
+#                 logp = tf.nn.log_softmax(logits)
+#                 entropy = -tf.reduce_mean(tf.reduce_sum(probs * logp, axis=-1))
+#                 loss_value = loss_value - args.entropy_coef * entropy
+
+#             grads = tape.gradient(loss_value, agent.model.trainable_variables)
+#             agent.optimizer.apply_gradients(zip(grads, agent.model.trainable_variables))
+
+#             # metrics
+#             preds = tf.argmax(logits, axis=-1, output_type=tf.int32).numpy()
+#             batch_acc = np.mean(preds == batch_actions)
+#             epoch_loss += float(loss_value.numpy())
+#             epoch_acc += batch_acc
+#             num_batches += 1
+
+#         print(f"Epoch {epoch+1}/{args.epochs} - loss: {epoch_loss/num_batches:.4f} - acc: {epoch_acc/num_batches:.4f}")
+
+#         # Optionally save intermediate weights
+#         if (epoch + 1) % args.save_every == 0:
+#             wname = args.save_weights or f"supervised_weights_epoch{epoch+1}.weights.h5"
+#             agent.model.save_weights(wname)
+#             print(f"Saved supervised weights to {wname}")
+
+#     final_weights = args.save_weights or 'supervised_weights_final.weights.h5'
+#     agent.model.save_weights(final_weights)
+#     print(f"Supervised pretraining complete. Final weights saved to {final_weights}")
+
 def supervised_pretrain(args):
     """
-    Train the policy head with manually recorded (state, action) pairs.
-    Expects a .npz file with arrays: states (N,H,W,2), actions (N,)
+    Behavior-cloning + value regression pretraining.
+    Expects .npz with arrays: states, actions, rewards, next_states.
     """
     print("--- Supervised Pretraining ---")
     if not args.data_file or not os.path.exists(args.data_file):
@@ -354,7 +437,9 @@ def supervised_pretrain(args):
     data = np.load(args.data_file)
     states = data['states'].astype(np.float32)
     actions = data['actions'].astype(np.int32)
-    print(f"Loaded {states.shape[0]} samples from {args.data_file}")
+    rewards = data.get('rewards', np.zeros(len(actions), dtype=np.float32))
+    next_states = data.get('next_states', None)
+    print(f"Loaded {len(states)} samples from {args.data_file}")
 
     env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward)
     agent = ActorCriticAgent(
@@ -364,66 +449,63 @@ def supervised_pretrain(args):
         entropy_coef=args.entropy_coef
     )
 
-    # If user provides an initial weights file, load them (optional)
     if args.init_weights and os.path.exists(args.init_weights):
         print(f"Loading initial weights from {args.init_weights}")
         agent.model.load_weights(args.init_weights)
 
-    # Build a Keras model to train only the policy head (logits).
-    # We'll reuse the agent.model and compile with a policy loss.
-    policy_loss = SparseCategoricalCrossentropy(from_logits=True)
-    acc_metric = SparseCategoricalAccuracy()
+    policy_loss_fn = SparseCategoricalCrossentropy(from_logits=True)
+    value_loss_fn = tf.keras.losses.MeanSquaredError()
 
-    # We'll train by calling model.train_on_batch using tape and optimizer to keep parity with existing optimizer.
     batch_size = args.batch_size
-    dataset_size = states.shape[0]
-
-    # shuffle dataset
-    idx = np.arange(dataset_size)
+    gamma = args.gamma
+    N = len(states)
+    idx = np.arange(N)
     np.random.shuffle(idx)
-    states = states[idx]
-    actions = actions[idx]
+    states, actions, rewards = states[idx], actions[idx], rewards[idx]
+    if next_states is not None:
+        next_states = next_states[idx]
 
-    # Training loop (simple)
     for epoch in range(args.epochs):
-        epoch_loss = 0.0
-        epoch_acc = 0.0
-        num_batches = 0
-        for start in range(0, dataset_size, batch_size):
-            end = min(start + batch_size, dataset_size)
-            batch_states = states[start:end]
-            batch_actions = actions[start:end]
+        total_loss, total_acc = 0.0, 0.0
+        for start in range(0, N, batch_size):
+            end = min(start + batch_size, N)
+            s_batch = states[start:end]
+            a_batch = actions[start:end]
+            r_batch = rewards[start:end]
+            ns_batch = next_states[start:end] if next_states is not None else None
 
             with tf.GradientTape() as tape:
-                logits, _ = agent.model(batch_states, training=True)
-                loss_value = policy_loss(batch_actions, logits)
-                # optional entropy regularization to encourage softness
+                logits, values = agent.model(s_batch, training=True)
+                p_loss = policy_loss_fn(a_batch, logits)
+
+                if ns_batch is not None:
+                    # Bootstrap target: r + γ * V(next)
+                    _, next_values = agent.model(ns_batch, training=False)
+                    target_values = r_batch + gamma * tf.squeeze(next_values)
+                else:
+                    target_values = r_batch
+
+                v_loss = value_loss_fn(target_values, tf.squeeze(values))
                 probs = tf.nn.softmax(logits)
                 logp = tf.nn.log_softmax(logits)
                 entropy = -tf.reduce_mean(tf.reduce_sum(probs * logp, axis=-1))
-                loss_value = loss_value - args.entropy_coef * entropy
+                loss = p_loss + args.value_coef * v_loss - args.entropy_coef * entropy
 
-            grads = tape.gradient(loss_value, agent.model.trainable_variables)
+            grads = tape.gradient(loss, agent.model.trainable_variables)
             agent.optimizer.apply_gradients(zip(grads, agent.model.trainable_variables))
 
-            # metrics
-            preds = tf.argmax(logits, axis=-1, output_type=tf.int32).numpy()
-            batch_acc = np.mean(preds == batch_actions)
-            epoch_loss += float(loss_value.numpy())
-            epoch_acc += batch_acc
-            num_batches += 1
+            preds = tf.argmax(logits, axis=-1, output_type=tf.int32)
+            total_acc += np.mean(preds.numpy() == a_batch)
+            total_loss += float(loss)
+        print(f"Epoch {epoch+1}/{args.epochs}: loss={total_loss/(N/batch_size):.4f}, acc={total_acc/(N/batch_size):.4f}")
 
-        print(f"Epoch {epoch+1}/{args.epochs} - loss: {epoch_loss/num_batches:.4f} - acc: {epoch_acc/num_batches:.4f}")
-
-        # Optionally save intermediate weights
         if (epoch + 1) % args.save_every == 0:
-            wname = args.save_weights or f"supervised_weights_epoch{epoch+1}.weights.h5"
-            agent.model.save_weights(wname)
-            print(f"Saved supervised weights to {wname}")
+            fname = f"supervised_epoch{epoch+1}.weights.h5"
+            agent.model.save_weights(fname)
+            print(f"Saved weights to {fname}")
 
-    final_weights = args.save_weights or 'supervised_weights_final.weights.h5'
-    agent.model.save_weights(final_weights)
-    print(f"Supervised pretraining complete. Final weights saved to {final_weights}")
+    agent.model.save_weights(args.save_weights)
+    print(f"Saved final supervised weights to {args.save_weights}")
 
 
 def train_agent(args):
@@ -684,7 +766,7 @@ def train_agent(args):
         avg_state_values.append(float(ep_metrics['state_value'] / args.steps)) # ADDED
         
         # Update live plot (modify mod frequency with print frequency desire)
-        if args.live_plot and (episode + 1) % 5 == 0:
+        if args.live_plot and (episode + 1) % 1 == 0:
             episodes_range = range(1, episode + 2)
             
             # Update grid and agent position
@@ -1086,6 +1168,8 @@ def run_demo(args):
         recording = False
         states_logged = []
         actions_logged = []
+        rewards_logged = []
+        next_states_logged = []
         ts_logged = []
 
         def on_press_manual(event):
@@ -1109,10 +1193,14 @@ def run_demo(args):
                     print("No manual data to save.")
                 else:
                     fname = f'manual_data_{int(time.time())}.npz'
+
                     np.savez_compressed(fname,
-                                        states=np.array(states_logged),
-                                        actions=np.array(actions_logged),
-                                        timestamps=np.array(ts_logged))
+                        states=np.array(states_logged),
+                        actions=np.array(actions_logged),
+                        rewards=np.array(rewards_logged),
+                        next_states=np.array(next_states_logged),
+                        timestamps=np.array(ts_logged))
+
                     print(f"Saved manual dataset to {fname}")
 
         # replace earlier connection for key press with this one
@@ -1127,13 +1215,19 @@ def run_demo(args):
             current_action = 4
             step_requested['flag'] = False
 
-            # Save pre-step state if recording (we store squeezed state HxWxC)
             if recording:
-                states_logged.append(np.squeeze(state, axis=0).copy())
-                actions_logged.append(action)
-                ts_logged.append(time.time())
+                # Log current state before taking action
+                state_copy = np.squeeze(state, axis=0).copy()
 
             next_state, reward, _, _ = env.step(action)
+
+            if recording:
+                states_logged.append(state_copy)
+                actions_logged.append(action)
+                rewards_logged.append(reward)
+                next_states_logged.append(np.squeeze(next_state, axis=0).copy())
+                ts_logged.append(time.time())
+
             state = next_state
 
             # Update visualizations
@@ -1291,6 +1385,9 @@ if __name__ == '__main__':
     sup_parser.add_argument('--save-every', type=int, default=5, help='Save intermediate weights every N epochs.')
     sup_parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate for supervised training.')
     sup_parser.add_argument('--entropy-coef', type=float, default=0.0, help='Entropy regularization during supervised training.')
+    # new
+    sup_parser.add_argument('--gamma', type=float, default=0.99, help='Discount for critic target bootstrap.')
+    sup_parser.add_argument('--value-coef', type=float, default=0.5, help='Weight of value loss in supervised pretraining.')
 
 
     # --- Demo Arguments ---
