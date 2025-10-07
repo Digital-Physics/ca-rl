@@ -15,6 +15,9 @@ import os
 import time
 from collections import deque
 import json
+from tensorflow.keras.losses import SparseCategoricalCrossentropy
+from tensorflow.keras.metrics import SparseCategoricalAccuracy
+
 
 # Enable interactive mode once for drawing some images during training
 plt.ion()
@@ -339,6 +342,89 @@ class ActorCriticAgent:
             'td_error': tf.abs(advantage) # TD error uses the unclipped advantage
         }
 
+def supervised_pretrain(args):
+    """
+    Train the policy head with manually recorded (state, action) pairs.
+    Expects a .npz file with arrays: states (N,H,W,2), actions (N,)
+    """
+    print("--- Supervised Pretraining ---")
+    if not args.data_file or not os.path.exists(args.data_file):
+        raise FileNotFoundError(f"Supervised data file not found: {args.data_file}")
+
+    data = np.load(args.data_file)
+    states = data['states'].astype(np.float32)
+    actions = data['actions'].astype(np.int32)
+    print(f"Loaded {states.shape[0]} samples from {args.data_file}")
+
+    env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward)
+    agent = ActorCriticAgent(
+        state_shape=(args.grid_size, args.grid_size, 2),
+        num_actions=env.num_actions,
+        learning_rate=args.lr,
+        entropy_coef=args.entropy_coef
+    )
+
+    # If user provides an initial weights file, load them (optional)
+    if args.init_weights and os.path.exists(args.init_weights):
+        print(f"Loading initial weights from {args.init_weights}")
+        agent.model.load_weights(args.init_weights)
+
+    # Build a Keras model to train only the policy head (logits).
+    # We'll reuse the agent.model and compile with a policy loss.
+    policy_loss = SparseCategoricalCrossentropy(from_logits=True)
+    acc_metric = SparseCategoricalAccuracy()
+
+    # We'll train by calling model.train_on_batch using tape and optimizer to keep parity with existing optimizer.
+    batch_size = args.batch_size
+    dataset_size = states.shape[0]
+
+    # shuffle dataset
+    idx = np.arange(dataset_size)
+    np.random.shuffle(idx)
+    states = states[idx]
+    actions = actions[idx]
+
+    # Training loop (simple)
+    for epoch in range(args.epochs):
+        epoch_loss = 0.0
+        epoch_acc = 0.0
+        num_batches = 0
+        for start in range(0, dataset_size, batch_size):
+            end = min(start + batch_size, dataset_size)
+            batch_states = states[start:end]
+            batch_actions = actions[start:end]
+
+            with tf.GradientTape() as tape:
+                logits, _ = agent.model(batch_states, training=True)
+                loss_value = policy_loss(batch_actions, logits)
+                # optional entropy regularization to encourage softness
+                probs = tf.nn.softmax(logits)
+                logp = tf.nn.log_softmax(logits)
+                entropy = -tf.reduce_mean(tf.reduce_sum(probs * logp, axis=-1))
+                loss_value = loss_value - args.entropy_coef * entropy
+
+            grads = tape.gradient(loss_value, agent.model.trainable_variables)
+            agent.optimizer.apply_gradients(zip(grads, agent.model.trainable_variables))
+
+            # metrics
+            preds = tf.argmax(logits, axis=-1, output_type=tf.int32).numpy()
+            batch_acc = np.mean(preds == batch_actions)
+            epoch_loss += float(loss_value.numpy())
+            epoch_acc += batch_acc
+            num_batches += 1
+
+        print(f"Epoch {epoch+1}/{args.epochs} - loss: {epoch_loss/num_batches:.4f} - acc: {epoch_acc/num_batches:.4f}")
+
+        # Optionally save intermediate weights
+        if (epoch + 1) % args.save_every == 0:
+            wname = args.save_weights or f"supervised_weights_epoch{epoch+1}.weights.h5"
+            agent.model.save_weights(wname)
+            print(f"Saved supervised weights to {wname}")
+
+    final_weights = args.save_weights or 'supervised_weights_final.weights.h5'
+    agent.model.save_weights(final_weights)
+    print(f"Supervised pretraining complete. Final weights saved to {final_weights}")
+
 
 def train_agent(args):
     """Main training loop with enhanced live visualization and metrics."""
@@ -355,6 +441,14 @@ def train_agent(args):
         learning_rate=args.lr,
         entropy_coef=args.entropy_coef
     )
+
+    # If provided, load supervised / pretrained weights to initialize RL
+    if getattr(args, 'pretrained_weights', None):
+        if os.path.exists(args.pretrained_weights):
+            print(f"Loading pretrained weights from {args.pretrained_weights}")
+            agent.model.load_weights(args.pretrained_weights)
+        else:
+            print(f"Pretrained weights not found at {args.pretrained_weights} (continuing without).")
 
     # Metrics tracking
     total_rewards = []
@@ -590,7 +684,7 @@ def train_agent(args):
         avg_state_values.append(float(ep_metrics['state_value'] / args.steps)) # ADDED
         
         # Update live plot (modify mod frequency with print frequency desire)
-        if args.live_plot and (episode + 1) % 1 == 0:
+        if args.live_plot and (episode + 1) % 5 == 0:
             episodes_range = range(1, episode + 2)
             
             # Update grid and agent position
@@ -928,13 +1022,103 @@ def run_demo(args):
 
     fig.canvas.mpl_connect('key_press_event', on_press)
 
+    # if manual_mode:
+    #     print("\nManual Control Enabled:")
+    #     print("- Arrow Keys to move")
+    #     print("- Spacebar to do nothing")
+    #     print("- Hex keys 0-f to write patterns\n")
+
+    #     step = 0
+    #     while step < args.steps:
+    #         plt.pause(0.01)
+    #         if not step_requested['flag']:
+    #             continue
+    #         action = current_action
+    #         current_action = 4
+    #         step_requested['flag'] = False
+
+    #         next_state, reward, _, _ = env.step(action)
+    #         state = next_state
+
+    #         # Update visualizations
+    #         grid_img.set_data(env.ca_grid)
+    #         agent_patch.set_xy((env.agent_x - 1.5, env.agent_y - 1.5))
+
+    #         if env.has_target:
+    #             target_patch.set_xy((env.target_x - 0.5, env.target_y - 0.5))
+    #             target_patch.set_visible(True)
+    #         else:
+    #             target_patch.set_visible(False)
+
+    #         # Update metrics
+    #         alive_count = np.sum(env.ca_grid)
+    #         density = np.mean(env.ca_grid)
+            
+    #         # --- Metrics String (Only non-V(s) metrics included) ---
+    #         metrics_str = f"Step: {step}\n"
+    #         metrics_str += f"Action: {env.actions[action]}\n"
+    #         metrics_str += f"Reward: {reward:.3f}\n"
+    #         metrics_str += f"Alive: {alive_count}\n"
+    #         metrics_str += f"Density: {density:.3f}\n"
+            
+    #         if env.reward_type == 'pattern':
+    #             bce = env._calculate_pattern_bce()
+    #             metrics_str += f"BCE: {bce:.4f}"
+    #             title_text.set_text(f"Step: {step} | Manual | BCE: {bce:.4f}")
+    #         else:
+    #             title_text.set_text(f"Step: {step} | Manual")
+            
+    #         metrics_text.set_text(metrics_str)
+    #         fig.canvas.draw_idle()
+    #         step += 1
+
+    #     print("Manual demo finished.")
+    #     plt.show(block=True)
     if manual_mode:
         print("\nManual Control Enabled:")
         print("- Arrow Keys to move")
         print("- Spacebar to do nothing")
-        print("- Hex keys 0-f to write patterns\n")
+        print("- Hex keys 0-f to write patterns")
+        print("- r to start/stop recording manual data")
+        print("- p to save recorded data to file\n")
 
         step = 0
+        recording = False
+        states_logged = []
+        actions_logged = []
+        ts_logged = []
+
+        def on_press_manual(event):
+            """Extend the earlier on_press handling with recording and save keys."""
+            nonlocal current_action, recording
+            if event.key is None:
+                return
+            key = event.key.lower()
+            if key in key_map:
+                current_action = key_map[key]
+                step_requested['flag'] = True
+            elif key in hex_keys:
+                pattern_index = hex_keys.index(key)
+                current_action = 5 + pattern_index
+                step_requested['flag'] = True
+            elif key == 'r':   # toggle recording
+                recording = not recording
+                print(f"Recording {'started' if recording else 'stopped'}.")
+            elif key == 'p':   # save to disk
+                if len(actions_logged) == 0:
+                    print("No manual data to save.")
+                else:
+                    fname = f'manual_data_{int(time.time())}.npz'
+                    np.savez_compressed(fname,
+                                        states=np.array(states_logged),
+                                        actions=np.array(actions_logged),
+                                        timestamps=np.array(ts_logged))
+                    print(f"Saved manual dataset to {fname}")
+
+        # replace earlier connection for key press with this one
+        fig.canvas.mpl_disconnect(fig.canvas.manager.key_press_handler_id) if hasattr(fig.canvas.manager, 'key_press_handler_id') else None
+        fig.canvas.mpl_connect('key_press_event', on_press_manual)
+
         while step < args.steps:
             plt.pause(0.01)
             if not step_requested['flag']:
@@ -942,6 +1126,12 @@ def run_demo(args):
             action = current_action
             current_action = 4
             step_requested['flag'] = False
+
+            # Save pre-step state if recording (we store squeezed state HxWxC)
+            if recording:
+                states_logged.append(np.squeeze(state, axis=0).copy())
+                actions_logged.append(action)
+                ts_logged.append(time.time())
 
             next_state, reward, _, _ = env.step(action)
             state = next_state
@@ -959,26 +1149,36 @@ def run_demo(args):
             # Update metrics
             alive_count = np.sum(env.ca_grid)
             density = np.mean(env.ca_grid)
-            
+
             # --- Metrics String (Only non-V(s) metrics included) ---
             metrics_str = f"Step: {step}\n"
             metrics_str += f"Action: {env.actions[action]}\n"
             metrics_str += f"Reward: {reward:.3f}\n"
             metrics_str += f"Alive: {alive_count}\n"
             metrics_str += f"Density: {density:.3f}\n"
-            
+            metrics_str += f"Recording: {recording}\n"
+
             if env.reward_type == 'pattern':
                 bce = env._calculate_pattern_bce()
                 metrics_str += f"BCE: {bce:.4f}"
                 title_text.set_text(f"Step: {step} | Manual | BCE: {bce:.4f}")
             else:
                 title_text.set_text(f"Step: {step} | Manual")
-            
+
             metrics_text.set_text(metrics_str)
             fig.canvas.draw_idle()
             step += 1
 
-        print("Manual demo finished.")
+        # End of manual loop: auto-save if we recorded anything
+        if len(actions_logged) > 0:
+            fname = f'manual_data_{int(time.time())}.npz'
+            np.savez_compressed(fname,
+                                states=np.array(states_logged),
+                                actions=np.array(actions_logged),
+                                timestamps=np.array(ts_logged))
+            print(f"Manual demo finished. Saved {len(actions_logged)} samples to {fname}")
+        else:
+            print("Manual demo finished. No data recorded.")
         plt.show(block=True)
     else:
         # AGENT MODE (V(s) is visible)
@@ -1074,6 +1274,24 @@ if __name__ == '__main__':
                             help='Load custom pattern from file for training.')
     train_parser.add_argument('--live-plot', action='store_true', 
                              help='Enable live plotting during training.')
+    train_parser.add_argument('--pretrained-weights', type=str, default=None,
+                            help='Optional path to pretrained weights to load before RL training (e.g. from supervised pretrain).')
+
+    # --- Supervised Learning Arguments ---
+    sup_parser = subparsers.add_parser('supervised', help='Run supervised pretraining on recorded manual data.')
+    sup_parser.add_argument('--data-file', type=str, required=True,
+                            help='Path to .npz file produced by manual recording (contains arrays states, actions).')
+    sup_parser.add_argument('--epochs', type=int, default=10, help='Supervised training epochs.')
+    sup_parser.add_argument('--batch-size', type=int, default=64, help='Batch size for supervised training.')
+    sup_parser.add_argument('--grid-size', type=int, default=12, help='CA grid size (must match dataset).')
+    sup_parser.add_argument('--rules', type=str, default='conway', choices=['conway','seeds','maze'])
+    sup_parser.add_argument('--reward', type=str, default='entropy', choices=['entropy','maxwell_demon','target_practice','pattern'])
+    sup_parser.add_argument('--init-weights', type=str, default=None, help='Optional initial weights to load before supervised training.')
+    sup_parser.add_argument('--save-weights', type=str, default='supervised_weights_final.weights.h5', help='Filename to save trained weights.')
+    sup_parser.add_argument('--save-every', type=int, default=5, help='Save intermediate weights every N epochs.')
+    sup_parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate for supervised training.')
+    sup_parser.add_argument('--entropy-coef', type=float, default=0.0, help='Entropy regularization during supervised training.')
+
 
     # --- Demo Arguments ---
     demo_parser = subparsers.add_parser('demo', help='Run a visual demonstration.')
@@ -1088,6 +1306,9 @@ if __name__ == '__main__':
                             help='Reward function.')
     demo_parser.add_argument('--pattern-file', type=str, default=None, 
                             help='Load custom pattern from file.')
+    demo_parser.add_argument('--record-manual', action='store_true',
+                            help='(Optional) start demo with manual recording support enabled (press r to toggle recording).')
+    # (We also added interactive record toggles inside the demo; flag not strictly necessary but kept for compatibility — you can use either.)
 
     # --- Pattern Creator Arguments ---
     pattern_parser = subparsers.add_parser('create_pattern', 
@@ -1103,3 +1324,5 @@ if __name__ == '__main__':
         run_demo(args)
     elif args.mode == 'create_pattern':
         interactive_pattern_creator(args)
+    elif args.mode == 'supervised':
+        supervised_pretrain(args)

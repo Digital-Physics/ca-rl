@@ -146,6 +146,25 @@ python rl_ca.py train --episodes 100 --live-plot --reward pattern --pattern-file
 
 uv run rl_ca.py train --episodes 100 --live-plot --reward pattern --pattern-file custom_pattern_12x12.npy
 
+
+# Manual Play -> Supervised Learning Pretraining -> Reinforcement Learning
+# 1) Run Demo and Record Manual Play
+uv run rl_ca.py demo --reward pattern --pattern-file custom_pattern_12x12.npy --weights nonexistent.weights.h5 --steps 500
+# In the demo window:
+#  - Press 'r' to start recording, 'r' to stop
+#  - Control with arrow keys / hex keys
+#  - Press 'p' to save immediately, or recording auto-saves on exit
+# Output: manual_data_<timestamp>.npz
+
+# 2) Train Supervised Learning model from recorded manual play (pre-training)
+uv run rl_ca.py supervised --data-file manual_data_1759853020.npz --epochs 30 --batch-size 64 --save-weights supervised_pretrained.weights.h5
+
+# 3) Start RL with pre-trained Supervised Learning Weights
+uv run rl_ca.py train --episodes 200 --steps 200 --pretrained-weights supervised_pretrained.weights.h5 --live-plot
+
+# 4) Demo Manual-to-SL-to_RL-agent
+
+
 ## Code Developed At Recurse Center
 The Recurse Center asks participants to program at the edge of their ability...
 
