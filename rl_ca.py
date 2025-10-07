@@ -342,95 +342,17 @@ class ActorCriticAgent:
             'td_error': tf.abs(advantage) # TD error uses the unclipped advantage
         }
 
-# def supervised_pretrain(args):
-#     """
-#     Train the policy head with manually recorded (state, action) pairs.
-#     Expects a .npz file with arrays: states (N,H,W,2), actions (N,)
-#     """
-#     print("--- Supervised Pretraining ---")
-#     if not args.data_file or not os.path.exists(args.data_file):
-#         raise FileNotFoundError(f"Supervised data file not found: {args.data_file}")
-
-#     data = np.load(args.data_file)
-#     states = data['states'].astype(np.float32)
-#     actions = data['actions'].astype(np.int32)
-#     print(f"Loaded {states.shape[0]} samples from {args.data_file}")
-
-#     env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward)
-#     agent = ActorCriticAgent(
-#         state_shape=(args.grid_size, args.grid_size, 2),
-#         num_actions=env.num_actions,
-#         learning_rate=args.lr,
-#         entropy_coef=args.entropy_coef
-#     )
-
-#     # If user provides an initial weights file, load them (optional)
-#     if args.init_weights and os.path.exists(args.init_weights):
-#         print(f"Loading initial weights from {args.init_weights}")
-#         agent.model.load_weights(args.init_weights)
-
-#     # Build a Keras model to train only the policy head (logits).
-#     # We'll reuse the agent.model and compile with a policy loss.
-#     policy_loss = SparseCategoricalCrossentropy(from_logits=True)
-#     acc_metric = SparseCategoricalAccuracy()
-
-#     # We'll train by calling model.train_on_batch using tape and optimizer to keep parity with existing optimizer.
-#     batch_size = args.batch_size
-#     dataset_size = states.shape[0]
-
-#     # shuffle dataset
-#     idx = np.arange(dataset_size)
-#     np.random.shuffle(idx)
-#     states = states[idx]
-#     actions = actions[idx]
-
-#     # Training loop (simple)
-#     for epoch in range(args.epochs):
-#         epoch_loss = 0.0
-#         epoch_acc = 0.0
-#         num_batches = 0
-#         for start in range(0, dataset_size, batch_size):
-#             end = min(start + batch_size, dataset_size)
-#             batch_states = states[start:end]
-#             batch_actions = actions[start:end]
-
-#             with tf.GradientTape() as tape:
-#                 logits, _ = agent.model(batch_states, training=True)
-#                 loss_value = policy_loss(batch_actions, logits)
-#                 # optional entropy regularization to encourage softness
-#                 probs = tf.nn.softmax(logits)
-#                 logp = tf.nn.log_softmax(logits)
-#                 entropy = -tf.reduce_mean(tf.reduce_sum(probs * logp, axis=-1))
-#                 loss_value = loss_value - args.entropy_coef * entropy
-
-#             grads = tape.gradient(loss_value, agent.model.trainable_variables)
-#             agent.optimizer.apply_gradients(zip(grads, agent.model.trainable_variables))
-
-#             # metrics
-#             preds = tf.argmax(logits, axis=-1, output_type=tf.int32).numpy()
-#             batch_acc = np.mean(preds == batch_actions)
-#             epoch_loss += float(loss_value.numpy())
-#             epoch_acc += batch_acc
-#             num_batches += 1
-
-#         print(f"Epoch {epoch+1}/{args.epochs} - loss: {epoch_loss/num_batches:.4f} - acc: {epoch_acc/num_batches:.4f}")
-
-#         # Optionally save intermediate weights
-#         if (epoch + 1) % args.save_every == 0:
-#             wname = args.save_weights or f"supervised_weights_epoch{epoch+1}.weights.h5"
-#             agent.model.save_weights(wname)
-#             print(f"Saved supervised weights to {wname}")
-
-#     final_weights = args.save_weights or 'supervised_weights_final.weights.h5'
-#     agent.model.save_weights(final_weights)
-#     print(f"Supervised pretraining complete. Final weights saved to {final_weights}")
-
 def supervised_pretrain(args):
     """
     Behavior-cloning + value regression pretraining.
     Expects .npz with arrays: states, actions, rewards, next_states.
     """
     print("--- Supervised Pretraining ---")
+    print(args)
+    print(args.data_file)
+    print(os.path.exists(args.data_file))
+    print("Absolute path:", os.path.abspath(args.data_file))
+
     if not args.data_file or not os.path.exists(args.data_file):
         raise FileNotFoundError(f"Supervised data file not found: {args.data_file}")
 
@@ -766,7 +688,7 @@ def train_agent(args):
         avg_state_values.append(float(ep_metrics['state_value'] / args.steps)) # ADDED
         
         # Update live plot (modify mod frequency with print frequency desire)
-        if args.live_plot and (episode + 1) % 1 == 0:
+        if args.live_plot and (episode + 1) % 5 == 0:
             episodes_range = range(1, episode + 2)
             
             # Update grid and agent position
@@ -956,128 +878,235 @@ def interactive_pattern_creator(args):
     # plt.pause(0.001)
     plt.show(block=True)
 
-
-def run_demo(args):
-    """Runs a visualization with enhanced metrics display."""
+def run_demo_auto(args):
+    """Agent-controlled autonomous demo with agent-square, target, probs, value, and metrics."""
     import matplotlib as mpl
     mpl.rcParams['keymap.fullscreen'] = []
 
-    print("--- Starting Demo ---")
+    print("--- Running Autonomous Demo ---")
     env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward)
-    
-    # Load custom pattern if specified
+
     if args.pattern_file and os.path.exists(args.pattern_file):
         env.load_pattern(args.pattern_file)
-    
+
+    # Require weights for autonomous demo
+    if not getattr(args, 'weights', None) or not os.path.exists(args.weights):
+        raise FileNotFoundError(f"Autonomous demo requires a valid weights file. Provide --weights <file> (found: {getattr(args,'weights',None)})")
+
     agent = ActorCriticAgent(
         state_shape=(args.grid_size, args.grid_size, 2),
         num_actions=env.num_actions
     )
-    
-    # --- Determine Mode and Load Weights ---
-    if os.path.exists(args.weights):
-        print(f"Loading weights from {args.weights}")
-        agent.model.load_weights(args.weights)
-        manual_mode = False
-    else:
-        print(f"Weights file not found: {args.weights}. Starting in manual control mode.")
-        manual_mode = True
-
+    agent.model.load_weights(args.weights)
     state = env.reset()
-    
-    # --- Setup Dynamic Figure Layout ---
-    if env.reward_type == 'pattern':
-        # 2 Rows, 4 Columns total
+
+    # Layout (similar to original): if pattern reward show target axis
+    if env.reward_type == 'pattern' and env.target_pattern is not None:
         fig = plt.figure(figsize=(16, 6))
         gs = fig.add_gridspec(2, 4, hspace=0.3, wspace=0.3)
-        ax_main = fig.add_subplot(gs[:, 0]) # CA Grid (2 rows wide)
-        ax_target = fig.add_subplot(gs[:, 1]) # Target Pattern (2 rows wide)
-        ax_probs = fig.add_subplot(gs[0, 2:]) # Action Probs (top row, 2 columns wide)
-        
-        if not manual_mode:
-            # Agent Mode: V(s) and Metrics get one spot each
-            ax_value = fig.add_subplot(gs[1, 2])
-            ax_metrics = fig.add_subplot(gs[1, 3])
-        else:
-            # Manual Mode: Metrics span both spots
-            ax_value = None # V(s) axis is not created
-            ax_metrics = fig.add_subplot(gs[1, 2:]) # Metrics spans 2 columns
-            
+        ax_main = fig.add_subplot(gs[:, 0])
+        ax_target = fig.add_subplot(gs[:, 1])
+        ax_probs = fig.add_subplot(gs[0, 2:])
+        ax_value = fig.add_subplot(gs[1, 2])
+        ax_metrics = fig.add_subplot(gs[1, 3])
         ax_target.imshow(env.target_pattern, cmap='binary', vmin=0, vmax=1)
         ax_target.set_title('Target Pattern')
         ax_target.set_xticks([])
         ax_target.set_yticks([])
-        
-    else: # No Pattern Reward
-        # 2 Rows, 3 Columns total
+    else:
         fig = plt.figure(figsize=(16, 6))
         gs = fig.add_gridspec(2, 3, hspace=0.3, wspace=0.3)
-        ax_main = fig.add_subplot(gs[:, 0]) # CA Grid (2 rows wide)
-        ax_probs = fig.add_subplot(gs[0, 1:]) # Action Probs (top row, 2 columns wide)
-        
-        if not manual_mode:
-            # Agent Mode: V(s) and Metrics get one spot each
-            ax_value = fig.add_subplot(gs[1, 1])
-            ax_metrics = fig.add_subplot(gs[1, 2])
-        else:
-            # Manual Mode: Metrics spans both spots
-            ax_value = None # V(s) axis is not created
-            ax_metrics = fig.add_subplot(gs[1, 1:]) # Metrics spans 2 columns
+        ax_main = fig.add_subplot(gs[:, 0])
+        ax_probs = fig.add_subplot(gs[0, 1:])
+        ax_value = fig.add_subplot(gs[1, 1])
+        ax_metrics = fig.add_subplot(gs[1, 2])
 
-
-    # Main grid display
-    grid_img = ax_main.imshow(env.ca_grid, cmap='binary', vmin=0, vmax=1)
-    agent_patch = plt.Rectangle((env.agent_x - 1.5, env.agent_y - 1.5), 2, 2, 
+    # Main grid + patches
+    grid_img = ax_main.imshow(env.ca_grid, cmap='binary', vmin=0, vmax=1, interpolation='nearest')
+    agent_patch = plt.Rectangle((env.agent_x - 1.5, env.agent_y - 1.5), 2, 2,
                                 facecolor='none', edgecolor='cyan', linewidth=2)
     ax_main.add_patch(agent_patch)
     target_patch = plt.Rectangle((env.target_x - 0.5, env.target_y - 0.5), 2, 2,
-                                 facecolor='none', edgecolor='red', linewidth=2, visible=False)
+                                 facecolor='none', edgecolor='red', linewidth=2, visible=env.has_target)
     ax_main.add_patch(target_patch)
-    title_text = ax_main.set_title("Step: 0 | Mode: " + ("Manual" if manual_mode else "Agent"))
+    title_text = ax_main.set_title("Step: 0 | Agent")
     ax_main.set_xticks([])
     ax_main.set_yticks([])
-    
-    # Action probability bar chart
+
+    # Action probs bars
     action_labels = ['↑', '↓', '←', '→', '○'] + [f'{i:X}' for i in range(16)]
-    if not manual_mode:
-        action_probs, state_value = agent.get_action_probs_and_value(state)
-    else:
-        action_probs = np.ones(env.num_actions) / env.num_actions
-        state_value = 0.0 # This value is still needed for bar chart init but won't be displayed
-    
-    bars = ax_probs.bar(range(env.num_actions), action_probs, color='steelblue', alpha=0.7)
+    action_probs, state_value = agent.get_action_probs_and_value(state)
+    bars = ax_probs.bar(range(env.num_actions), action_probs, color='steelblue', alpha=0.8)
     ax_probs.set_ylim([0, 1])
     ax_probs.set_xticks(range(env.num_actions))
     ax_probs.set_xticklabels(action_labels, fontsize=8)
     ax_probs.set_ylabel('Probability')
     ax_probs.set_title('Action Distribution')
-    ax_probs.grid(axis='y', alpha=0.3)
-    
-    # Value function display (Only created/set up if in Agent Mode)
-    value_text = None
-    if not manual_mode:
-        value_text = ax_value.text(0.5, 0.5, f'V(s) = {state_value:.3f}', 
-                                   ha='center', va='center', fontsize=20, 
-                                   bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
-        ax_value.set_xlim([0, 1])
-        ax_value.set_ylim([0, 1])
-        ax_value.set_title('State Value (Critic)')
-        ax_value.axis('off')
+    ax_probs.grid(axis='y', alpha=0.25)
 
-    # Additional metrics setup
-    # This remains visible and now takes up the space from V(s) in manual mode
-    metrics_text = ax_metrics.text(0.1, 0.9, '', va='top', fontsize=10, family='monospace')
-    ax_metrics.set_xlim([0, 1])
-    ax_metrics.set_ylim([0, 1])
+    # Value display
+    value_text = ax_value.text(0.5, 0.5, f'V(s) = {state_value:.3f}',
+                               ha='center', va='center', fontsize=18,
+                               bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
+    ax_value.set_xlim([0, 1])
+    ax_value.set_ylim([0, 1])
+    ax_value.set_title('State Value (Critic)')
+    ax_value.axis('off')
+
+    # Metrics panel
+    metrics_text = ax_metrics.text(0.05, 0.95, '', va='top', fontsize=10, family='monospace')
     ax_metrics.set_title('Metrics')
     ax_metrics.axis('off')
+
+    # running stats
+    value_history = deque(maxlen=200)
+    entropy_history = deque(maxlen=200)
+
+    def update(frame):
+        nonlocal state
+        action = agent.select_action(state)
+        # get metrics for current state (before stepping)
+        action_probs, state_value = agent.get_action_probs_and_value(state)
+        clipped_probs = np.clip(action_probs, 1e-10, 1.0)
+        entropy = -np.sum(clipped_probs * np.log(clipped_probs))
+        value_history.append(state_value)
+        entropy_history.append(entropy)
+
+        # step environment
+        next_state, reward, _, _ = env.step(action)
+        state = next_state
+
+        # update grid & patches
+        grid_img.set_data(env.ca_grid)
+        agent_patch.set_xy((env.agent_x - 1.5, env.agent_y - 1.5))
+
+        if env.has_target:
+            target_patch.set_xy((env.target_x - 0.5, env.target_y - 0.5))
+            target_patch.set_visible(True)
+        else:
+            target_patch.set_visible(False)
+
+        # update bars and highlight selected action
+        for i, (bar, p) in enumerate(zip(bars, action_probs)):
+            bar.set_height(p)
+            bar.set_color('coral' if i == action else 'steelblue')
+
+        # update value text
+        value_text.set_text(f'V(s) = {state_value:.3f}')
+
+        # update metrics block
+        alive_count = int(np.sum(env.ca_grid))
+        density = float(np.mean(env.ca_grid))
+        avg_v = float(np.mean(value_history)) if value_history else 0.0
+        avg_h = float(np.mean(entropy_history)) if entropy_history else 0.0
+
+        metrics_str = (
+            f"Step: {frame}\n"
+            f"Action: {env.actions[action]}\n"
+            f"Reward: {reward:.3f}\n"
+            f"Alive: {alive_count}\n"
+            f"Density: {density:.3f}\n"
+            f"Entropy: {entropy:.3f}\n"
+            f"Avg V: {avg_v:.3f}\n"
+            f"Avg H: {avg_h:.3f}"
+        )
+
+        if env.reward_type == 'pattern' and env.target_pattern is not None:
+            bce = env._calculate_pattern_bce()
+            metrics_str += f"\nBCE: {bce:.4f}"
+            title_text.set_text(f"Step: {frame} | Agent | BCE: {bce:.4f}")
+        else:
+            title_text.set_text(f"Step: {frame} | Agent")
+
+        metrics_text.set_text(metrics_str)
+
+        # return artists for FuncAnimation (makes update more robust)
+        return [grid_img, agent_patch, target_patch] + list(bars)
+
+    ani = animation.FuncAnimation(fig, update, frames=args.steps, interval=100, repeat=False, blit=False)
+    print("\nAgent demo running (close window to stop).")
+    plt.show(block=True)
+
+def run_demo_manual(args):
+    """Manual demo: shows agent/user square, target, probs, and metrics. r=record, p=save, q=quit."""
+    import matplotlib as mpl
+    mpl.rcParams['keymap.fullscreen'] = []
+
+    print("--- Running Manual Demo ---")
+    env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward)
+
+    if args.pattern_file and os.path.exists(args.pattern_file):
+        env.load_pattern(args.pattern_file)
+
+    # Optional: show agent-based probabilities if user passed weights
+    agent = None
+    if getattr(args, 'weights', None) and os.path.exists(args.weights):
+        agent = ActorCriticAgent(
+            state_shape=(args.grid_size, args.grid_size, 2),
+            num_actions=env.num_actions
+        )
+        try:
+            agent.model.load_weights(args.weights)
+            print(f"Loaded weights for manual-display from {args.weights}")
+        except Exception as e:
+            print(f"Failed loading weights for manual display: {e}")
+            agent = None
+
+    state = env.reset()
+
+    # Layout: mimic demo layout so user sees the same panels
+    if env.reward_type == 'pattern' and env.target_pattern is not None:
+        fig = plt.figure(figsize=(16, 6))
+        gs = fig.add_gridspec(2, 4, hspace=0.3, wspace=0.3)
+        ax_main = fig.add_subplot(gs[:, 0])
+        ax_target = fig.add_subplot(gs[:, 1])
+        ax_probs = fig.add_subplot(gs[0, 2:])
+        ax_metrics = fig.add_subplot(gs[1, 2:])
+        ax_target.imshow(env.target_pattern, cmap='binary', vmin=0, vmax=1)
+        ax_target.set_title('Target Pattern')
+        ax_target.set_xticks([])
+        ax_target.set_yticks([])
+    else:
+        fig = plt.figure(figsize=(16, 6))
+        gs = fig.add_gridspec(2, 3, hspace=0.3, wspace=0.3)
+        ax_main = fig.add_subplot(gs[:, 0])
+        ax_probs = fig.add_subplot(gs[0, 1:])
+        ax_metrics = fig.add_subplot(gs[1, 1:])
     
-    # Tracking for metrics
-    value_history = deque(maxlen=100)
-    entropy_history = deque(maxlen=100)
-    
-    current_action = 4  # do nothing
-    step_requested = {'flag': False}
+    grid_img = ax_main.imshow(env.ca_grid, cmap='binary', vmin=0, vmax=1, interpolation='nearest')
+    agent_patch = plt.Rectangle((env.agent_x - 1.5, env.agent_y - 1.5), 2, 2,
+                                facecolor='none', edgecolor='cyan', linewidth=2)
+    ax_main.add_patch(agent_patch)
+    target_patch = plt.Rectangle((env.target_x - 0.5, env.target_y - 0.5), 2, 2,
+                                 facecolor='none', edgecolor='red', linewidth=2, visible=env.has_target)
+    ax_main.add_patch(target_patch)
+    title_text = ax_main.set_title("Step: 0 | Manual")
+    ax_main.set_xticks([])
+    ax_main.set_yticks([])
+
+    action_labels = ['↑', '↓', '←', '→', '○'] + [f'{i:X}' for i in range(16)]
+    if agent is not None:
+        action_probs, state_value = agent.get_action_probs_and_value(state)
+    else:
+        action_probs = np.ones(env.num_actions) / env.num_actions
+        state_value = 0.0
+
+    bars = ax_probs.bar(range(env.num_actions), action_probs, color='steelblue', alpha=0.8)
+    ax_probs.set_ylim([0, 1])
+    ax_probs.set_xticks(range(env.num_actions))
+    ax_probs.set_xticklabels(action_labels, fontsize=8)
+    ax_probs.set_ylabel('Probability')
+    ax_probs.set_title('Action Distribution')
+    ax_probs.grid(axis='y', alpha=0.25)
+
+    metrics_text = ax_metrics.text(0.05, 0.95, '', va='top', fontsize=10, family='monospace')
+    ax_metrics.set_title('Metrics')
+    ax_metrics.axis('off')
+
+    # Recording storage
+    recording = False
+    states_logged, actions_logged, rewards_logged, next_states_logged, ts_logged = [], [], [], [], []
+    step_counter = 0
 
     key_map = {
         'up': 0,
@@ -1088,293 +1117,152 @@ def run_demo(args):
     }
     hex_keys = list('0123456789abcdef')
 
-    def on_press(event):
+    def on_key(event):
+        nonlocal state, recording, step_counter
         if event.key is None:
             return
         key = event.key.lower()
-        nonlocal current_action
 
+        # Toggle recording
+        if key == 'r':
+            recording = not recording
+            print(f"Recording {'started' if recording else 'stopped'}.")
+            return
+
+        # Save recorded data while window open
+        if key == 'p':
+            if len(actions_logged) == 0:
+                print("No manual data to save.")
+            else:
+                fname = f'manual_data_{int(time.time())}.npz'
+                np.savez_compressed(fname,
+                                    states=np.array(states_logged),
+                                    actions=np.array(actions_logged),
+                                    rewards=np.array(rewards_logged),
+                                    next_states=np.array(next_states_logged),
+                                    timestamps=np.array(ts_logged))
+                print(f"Saved manual dataset to {fname} ({len(actions_logged)} samples)")
+            return
+
+        # Quit
+        if key == 'q' or key == 'escape':
+            plt.close()
+            return
+
+        # Determine action from arrow / space / hex
         if key in key_map:
-            current_action = key_map[key]
-            step_requested['flag'] = True
+            action = key_map[key]
         elif key in hex_keys:
-            pattern_index = hex_keys.index(key)
-            current_action = 5 + pattern_index
-            step_requested['flag'] = True
-
-    fig.canvas.mpl_connect('key_press_event', on_press)
-
-    # if manual_mode:
-    #     print("\nManual Control Enabled:")
-    #     print("- Arrow Keys to move")
-    #     print("- Spacebar to do nothing")
-    #     print("- Hex keys 0-f to write patterns\n")
-
-    #     step = 0
-    #     while step < args.steps:
-    #         plt.pause(0.01)
-    #         if not step_requested['flag']:
-    #             continue
-    #         action = current_action
-    #         current_action = 4
-    #         step_requested['flag'] = False
-
-    #         next_state, reward, _, _ = env.step(action)
-    #         state = next_state
-
-    #         # Update visualizations
-    #         grid_img.set_data(env.ca_grid)
-    #         agent_patch.set_xy((env.agent_x - 1.5, env.agent_y - 1.5))
-
-    #         if env.has_target:
-    #             target_patch.set_xy((env.target_x - 0.5, env.target_y - 0.5))
-    #             target_patch.set_visible(True)
-    #         else:
-    #             target_patch.set_visible(False)
-
-    #         # Update metrics
-    #         alive_count = np.sum(env.ca_grid)
-    #         density = np.mean(env.ca_grid)
-            
-    #         # --- Metrics String (Only non-V(s) metrics included) ---
-    #         metrics_str = f"Step: {step}\n"
-    #         metrics_str += f"Action: {env.actions[action]}\n"
-    #         metrics_str += f"Reward: {reward:.3f}\n"
-    #         metrics_str += f"Alive: {alive_count}\n"
-    #         metrics_str += f"Density: {density:.3f}\n"
-            
-    #         if env.reward_type == 'pattern':
-    #             bce = env._calculate_pattern_bce()
-    #             metrics_str += f"BCE: {bce:.4f}"
-    #             title_text.set_text(f"Step: {step} | Manual | BCE: {bce:.4f}")
-    #         else:
-    #             title_text.set_text(f"Step: {step} | Manual")
-            
-    #         metrics_text.set_text(metrics_str)
-    #         fig.canvas.draw_idle()
-    #         step += 1
-
-    #     print("Manual demo finished.")
-    #     plt.show(block=True)
-    if manual_mode:
-        print("\nManual Control Enabled:")
-        print("- Arrow Keys to move")
-        print("- Spacebar to do nothing")
-        print("- Hex keys 0-f to write patterns")
-        print("- r to start/stop recording manual data")
-        print("- p to save recorded data to file\n")
-
-        step = 0
-        recording = False
-        states_logged = []
-        actions_logged = []
-        rewards_logged = []
-        next_states_logged = []
-        ts_logged = []
-
-        def on_press_manual(event):
-            """Extend the earlier on_press handling with recording and save keys."""
-            nonlocal current_action, recording
-            if event.key is None:
-                return
-            key = event.key.lower()
-            if key in key_map:
-                current_action = key_map[key]
-                step_requested['flag'] = True
-            elif key in hex_keys:
-                pattern_index = hex_keys.index(key)
-                current_action = 5 + pattern_index
-                step_requested['flag'] = True
-            elif key == 'r':   # toggle recording
-                recording = not recording
-                print(f"Recording {'started' if recording else 'stopped'}.")
-            elif key == 'p':   # save to disk
-                if len(actions_logged) == 0:
-                    print("No manual data to save.")
-                else:
-                    fname = f'manual_data_{int(time.time())}.npz'
-
-                    np.savez_compressed(fname,
-                        states=np.array(states_logged),
-                        actions=np.array(actions_logged),
-                        rewards=np.array(rewards_logged),
-                        next_states=np.array(next_states_logged),
-                        timestamps=np.array(ts_logged))
-
-                    print(f"Saved manual dataset to {fname}")
-
-        # replace earlier connection for key press with this one
-        fig.canvas.mpl_disconnect(fig.canvas.manager.key_press_handler_id) if hasattr(fig.canvas.manager, 'key_press_handler_id') else None
-        fig.canvas.mpl_connect('key_press_event', on_press_manual)
-
-        while step < args.steps:
-            plt.pause(0.01)
-            if not step_requested['flag']:
-                continue
-            action = current_action
-            current_action = 4
-            step_requested['flag'] = False
-
-            if recording:
-                # Log current state before taking action
-                state_copy = np.squeeze(state, axis=0).copy()
-
-            next_state, reward, _, _ = env.step(action)
-
-            if recording:
-                states_logged.append(state_copy)
-                actions_logged.append(action)
-                rewards_logged.append(reward)
-                next_states_logged.append(np.squeeze(next_state, axis=0).copy())
-                ts_logged.append(time.time())
-
-            state = next_state
-
-            # Update visualizations
-            grid_img.set_data(env.ca_grid)
-            agent_patch.set_xy((env.agent_x - 1.5, env.agent_y - 1.5))
-
-            if env.has_target:
-                target_patch.set_xy((env.target_x - 0.5, env.target_y - 0.5))
-                target_patch.set_visible(True)
-            else:
-                target_patch.set_visible(False)
-
-            # Update metrics
-            alive_count = np.sum(env.ca_grid)
-            density = np.mean(env.ca_grid)
-
-            # --- Metrics String (Only non-V(s) metrics included) ---
-            metrics_str = f"Step: {step}\n"
-            metrics_str += f"Action: {env.actions[action]}\n"
-            metrics_str += f"Reward: {reward:.3f}\n"
-            metrics_str += f"Alive: {alive_count}\n"
-            metrics_str += f"Density: {density:.3f}\n"
-            metrics_str += f"Recording: {recording}\n"
-
-            if env.reward_type == 'pattern':
-                bce = env._calculate_pattern_bce()
-                metrics_str += f"BCE: {bce:.4f}"
-                title_text.set_text(f"Step: {step} | Manual | BCE: {bce:.4f}")
-            else:
-                title_text.set_text(f"Step: {step} | Manual")
-
-            metrics_text.set_text(metrics_str)
-            fig.canvas.draw_idle()
-            step += 1
-
-        # End of manual loop: auto-save if we recorded anything
-        if len(actions_logged) > 0:
-            fname = f'manual_data_{int(time.time())}.npz'
-            np.savez_compressed(fname,
-                                states=np.array(states_logged),
-                                actions=np.array(actions_logged),
-                                timestamps=np.array(ts_logged))
-            print(f"Manual demo finished. Saved {len(actions_logged)} samples to {fname}")
+            action = 5 + hex_keys.index(key)
         else:
-            print("Manual demo finished. No data recorded.")
-        plt.show(block=True)
-    else:
-        # AGENT MODE (V(s) is visible)
-        def update(frame):
-            nonlocal state
-            action = agent.select_action(state)
-            next_state, reward, _, _ = env.step(action)
-            
-            # Get current metrics
+            # unknown key -> ignore
+            return
+
+        # log pre-action state if recording
+        if recording:
+            states_logged.append(np.squeeze(state, axis=0).copy())
+
+        next_state, reward, _, _ = env.step(action)
+
+        if recording:
+            actions_logged.append(action)
+            rewards_logged.append(reward)
+            next_states_logged.append(np.squeeze(next_state, axis=0).copy())
+            ts_logged.append(time.time())
+
+        # update state pointer
+        state = next_state
+        step_counter += 1
+
+        # update visuals
+        grid_img.set_data(env.ca_grid)
+        agent_patch.set_xy((env.agent_x - 1.5, env.agent_y - 1.5))
+
+        if env.has_target:
+            target_patch.set_xy((env.target_x - 0.5, env.target_y - 0.5))
+            target_patch.set_visible(True)
+        else:
+            target_patch.set_visible(False)
+
+        # If we have a loaded agent, show its probs for the *current* state,
+        # otherwise show uniform but highlight user action on the bars.
+        if agent is not None:
             action_probs, state_value = agent.get_action_probs_and_value(state)
-            # Clip probabilities to avoid log(0) issues
-            clipped_probs = np.clip(action_probs, 1e-10, 1.0) 
-            entropy = -np.sum(clipped_probs * np.log(clipped_probs))
-            
-            value_history.append(state_value)
-            entropy_history.append(entropy)
-            
-            state = next_state
+        else:
+            action_probs = np.ones(env.num_actions) / env.num_actions
+            state_value = 0.0
 
-            # Update grid and agent
-            grid_img.set_data(env.ca_grid)
-            agent_patch.set_xy((env.agent_x - 1.5, env.agent_y - 1.5))
-            
-            if env.has_target:
-                target_patch.set_xy((env.target_x - 0.5, env.target_y - 0.5))
-                target_patch.set_visible(True)
-            else:
-                target_patch.set_visible(False)
+        for i, (bar, p) in enumerate(zip(bars, action_probs)):
+            bar.set_height(p)
+            bar.set_color('coral' if i == action else 'steelblue')
 
-            # Update action probabilities
-            for bar, prob in zip(bars, action_probs):
-                bar.set_height(prob)
-                # Highlight selected action
-                if bars.patches.index(bar) == action:
-                    bar.set_color('coral')
-                else:
-                    bar.set_color('steelblue')
-            
-            # Update value display (V(s) is guaranteed to be created here)
-            value_text.set_text(f'V(s) = {state_value:.3f}')
-            
-            # Update metrics
-            alive_count = np.sum(env.ca_grid)
-            density = np.mean(env.ca_grid)
-            avg_value = np.mean(value_history) if value_history else 0
-            avg_entropy = np.mean(entropy_history) if entropy_history else 0
-            
-            metrics_str = f"Step: {frame}\n"
-            metrics_str += f"Action: {env.actions[action]}\n"
-            metrics_str += f"Reward: {reward:.3f}\n"
-            metrics_str += f"Alive: {alive_count}\n"
-            metrics_str += f"Density: {density:.3f}\n"
-            metrics_str += f"Entropy: {entropy:.3f}\n"
-            metrics_str += f"Avg V(s): {avg_value:.3f}\n"
-            metrics_str += f"Avg H: {avg_entropy:.3f}"
-            
-            if env.reward_type == 'pattern':
-                bce = env._calculate_pattern_bce()
-                metrics_str += f"\nBCE: {bce:.4f}"
-                title_text.set_text(f"Step: {frame} | Agent | BCE: {bce:.4f}")
-            else:
-                title_text.set_text(f"Step: {frame} | Agent")
-            
-            metrics_text.set_text(metrics_str)
-            
-            return grid_img, agent_patch, target_patch, title_text
+        # Build metrics string
+        alive_count = int(np.sum(env.ca_grid))
+        density = float(np.mean(env.ca_grid))
+        metrics_str = (
+            f"Step: {step_counter}\n"
+            f"Action: {env.actions[action]}\n"
+            f"Reward: {reward:.3f}\n"
+            f"Alive: {alive_count}\n"
+            f"Density: {density:.3f}\n"
+            f"Recording: {recording}\n"
+            f"V(s): {state_value:.3f}"
+        )
+        if env.reward_type == 'pattern':
+            bce = env._calculate_pattern_bce()
+            metrics_str += f"\nBCE: {bce:.4f}"
+            title_text.set_text(f"Step: {step_counter} | Manual | BCE: {bce:.4f}")
+        else:
+            title_text.set_text(f"Step: {step_counter} | Manual")
 
-        ani = animation.FuncAnimation(fig, update, frames=args.steps, 
-                                     interval=100, repeat=False, blit=False)
-        print("\nAgent demo running (close window to stop).")
-        plt.show(block=True)
+        metrics_text.set_text(metrics_str)
+        fig.canvas.draw_idle()
+
+    fig.canvas.mpl_connect('key_press_event', on_key)
+
+    print("\nManual Control Enabled:")
+    print("- Arrow Keys to move, Space to do nothing")
+    print("- Hex keys 0-f to write 2x2 patterns")
+    print("- r to start/stop recording, p to save, q to quit\n")
+
+    # block until user closes window
+    plt.show(block=True)
+
+    # After window closed, auto-save recorded data if any (if user didn't press p)
+    if len(actions_logged) > 0 and not os.path.exists(f'manual_data_{int(time.time())}.npz'):
+        fname = f'manual_data_{int(time.time())}.npz'
+        np.savez_compressed(fname,
+                            states=np.array(states_logged),
+                            actions=np.array(actions_logged),
+                            rewards=np.array(rewards_logged),
+                            next_states=np.array(next_states_logged),
+                            timestamps=np.array(ts_logged))
+        print(f"Manual demo finished. Saved {len(actions_logged)} samples to {fname}")
+    elif len(actions_logged) == 0:
+        print("Manual demo finished. No data recorded.")
+
 
 # --- Main Execution ---
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Enhanced RL in Cellular Automata Environment.")
-    subparsers = parser.add_subparsers(dest='mode', required=True, 
-                                      help='Select mode: train, demo, or create_pattern')
+    subparsers = parser.add_subparsers(dest='mode', required=True, help='Select mode: train, demo, or create_pattern')
 
     # --- Training Arguments ---
     train_parser = subparsers.add_parser('train', help='Run the training loop.')
     train_parser.add_argument('--episodes', type=int, default=100, help='Number of training episodes.')
     train_parser.add_argument('--steps', type=int, default=200, help='Number of steps per episode.')
     train_parser.add_argument('--lr', type=float, default=0.00001, help='Learning rate.')
-    train_parser.add_argument('--entropy-coef', type=float, default=0.25, 
-                             help='Entropy regularization coefficient.')
+    train_parser.add_argument('--entropy-coef', type=float, default=0.25, help='Entropy regularization coefficient.')
     train_parser.add_argument('--grid-size', type=int, default=12, help='Size of the CA grid.')
-    train_parser.add_argument('--rules', type=str, default='conway', 
-                             choices=['conway', 'seeds', 'maze'], help='CA rule set.')
-    train_parser.add_argument('--reward', type=str, default='entropy', 
-                             choices=['entropy', 'maxwell_demon', 'target_practice', 'pattern'], 
-                             help='Reward function.')
-    train_parser.add_argument('--pattern-file', type=str, default=None, 
-                            help='Load custom pattern from file for training.')
-    train_parser.add_argument('--live-plot', action='store_true', 
-                             help='Enable live plotting during training.')
-    train_parser.add_argument('--pretrained-weights', type=str, default=None,
-                            help='Optional path to pretrained weights to load before RL training (e.g. from supervised pretrain).')
+    train_parser.add_argument('--rules', type=str, default='conway', choices=['conway', 'seeds', 'maze'], help='CA rule set.')
+    train_parser.add_argument('--reward', type=str, default='entropy', choices=['entropy', 'maxwell_demon', 'target_practice', 'pattern'], help='Reward function.')
+    train_parser.add_argument('--pattern-file', type=str, default=None, help='Load custom pattern from file for training.')
+    train_parser.add_argument('--live-plot', action='store_true', help='Enable live plotting during training.')
+    train_parser.add_argument('--pretrained-weights', type=str, default=None, help='Optional path to pretrained weights to load before RL training (e.g. from supervised pretrain).')
 
     # --- Supervised Learning Arguments ---
     sup_parser = subparsers.add_parser('supervised', help='Run supervised pretraining on recorded manual data.')
-    sup_parser.add_argument('--data-file', type=str, required=True,
-                            help='Path to .npz file produced by manual recording (contains arrays states, actions).')
+    sup_parser.add_argument('--data-file', type=str, required=True, help='Path to .npz file produced by manual recording (contains arrays states, actions).')
     sup_parser.add_argument('--epochs', type=int, default=10, help='Supervised training epochs.')
     sup_parser.add_argument('--batch-size', type=int, default=64, help='Batch size for supervised training.')
     sup_parser.add_argument('--grid-size', type=int, default=12, help='CA grid size (must match dataset).')
@@ -1385,41 +1273,42 @@ if __name__ == '__main__':
     sup_parser.add_argument('--save-every', type=int, default=5, help='Save intermediate weights every N epochs.')
     sup_parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate for supervised training.')
     sup_parser.add_argument('--entropy-coef', type=float, default=0.0, help='Entropy regularization during supervised training.')
-    # new
+    # supervised learning should also pre-train critic, not just actor, so we have critic hyperparameters too
     sup_parser.add_argument('--gamma', type=float, default=0.99, help='Discount for critic target bootstrap.')
     sup_parser.add_argument('--value-coef', type=float, default=0.5, help='Weight of value loss in supervised pretraining.')
 
-
     # --- Demo Arguments ---
-    demo_parser = subparsers.add_parser('demo', help='Run a visual demonstration.')
-    demo_parser.add_argument('--weights', type=str, default='ca_agent_weights_final.weights.h5', 
-                            help='Path to saved model weights.')
-    demo_parser.add_argument('--steps', type=int, default=500, help='Number of demo steps.')
-    demo_parser.add_argument('--grid-size', type=int, default=12, help='Size of the CA grid.')
-    demo_parser.add_argument('--rules', type=str, default='conway', 
-                            choices=['conway', 'seeds', 'maze'], help='CA rule set.')
-    demo_parser.add_argument('--reward', type=str, default='entropy', 
-                            choices=['entropy', 'maxwell_demon', 'target_practice', 'pattern'], 
-                            help='Reward function.')
-    demo_parser.add_argument('--pattern-file', type=str, default=None, 
-                            help='Load custom pattern from file.')
-    demo_parser.add_argument('--record-manual', action='store_true',
-                            help='(Optional) start demo with manual recording support enabled (press r to toggle recording).')
-    # (We also added interactive record toggles inside the demo; flag not strictly necessary but kept for compatibility — you can use either.)
+    demo_parser = subparsers.add_parser('demo', help='Run autonomous demo with trained agent.')
+    demo_parser.add_argument('--weights', type=str, default='ca_agent_weights_final.weights.h5')
+    demo_parser.add_argument('--steps', type=int, default=500)
+    demo_parser.add_argument('--grid-size', type=int, default=12)
+    demo_parser.add_argument('--rules', type=str, default='conway', choices=['conway','seeds','maze'])
+    demo_parser.add_argument('--reward', type=str, default='entropy', choices=['entropy','maxwell_demon','target_practice','pattern'])
+    demo_parser.add_argument('--pattern-file', type=str, default=None)
+
+    # --- Manual Demo ---
+    manual_parser = subparsers.add_parser('manual', help='Manual play + optional recording.')
+    manual_parser.add_argument('--grid-size', type=int, default=12)
+    manual_parser.add_argument('--rules', type=str, default='conway', choices=['conway','seeds','maze'])
+    manual_parser.add_argument('--reward', type=str, default='entropy', choices=['entropy','maxwell_demon','target_practice','pattern'])
+    manual_parser.add_argument('--pattern-file', type=str, default=None)
+    manual_parser.add_argument('--steps', type=int, default=500)
+    manual_parser.add_argument('--weights', type=str, default=None, help='(optional) weights file to visualize agent policy while playing')
 
     # --- Pattern Creator Arguments ---
-    pattern_parser = subparsers.add_parser('create_pattern', 
-                                          help='Interactive pattern creation tool.')
-    pattern_parser.add_argument('--grid-size', type=int, default=12, 
-                               help='Size of the pattern grid.')
+    pattern_parser = subparsers.add_parser('create_pattern', help='Interactive pattern creation tool.')
+    pattern_parser.add_argument('--grid-size', type=int, default=12, help='Size of the pattern grid.')
+
 
     args = parser.parse_args()
 
     if args.mode == 'train':
         train_agent(args)
-    elif args.mode == 'demo':
-        run_demo(args)
-    elif args.mode == 'create_pattern':
-        interactive_pattern_creator(args)
     elif args.mode == 'supervised':
         supervised_pretrain(args)
+    elif args.mode == 'demo':
+        run_demo_auto(args)
+    elif args.mode == 'manual':
+        run_demo_manual(args)
+    elif args.mode == 'create_pattern':
+        interactive_pattern_creator(args)
