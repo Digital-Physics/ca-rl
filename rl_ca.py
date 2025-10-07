@@ -162,11 +162,7 @@ class CAEnv:
                 self._spawn_target()
         elif self.reward_type == 'pattern':
             binary_cross_entropy = self._calculate_pattern_bce()
-            # print("bce", binary_cross_entropy)
             reward = -binary_cross_entropy
-            # print("reward (-bce)", reward)
-            # if binary_cross_entropy < 0.01:
-            #     reward += 10
 
         done = False
         return self._get_state(), reward, done, {}
@@ -246,7 +242,7 @@ class ActorCriticAgent:
     """
     The Actor-Critic agent with enhanced metrics extraction.
     """
-    def __init__(self, state_shape, num_actions, learning_rate=0.0001, gamma=0.95, entropy_coef=0.01):
+    def __init__(self, state_shape, num_actions, learning_rate=0.001, gamma=0.95, entropy_coef=0.01):
         self.state_shape = state_shape
         self.num_actions = num_actions
         self.learning_rate = learning_rate
@@ -295,14 +291,14 @@ class ActorCriticAgent:
         Performs a single training step (Actor-Critic) with Advantage Clipping
         AND Entropy Regularization.
         """
-        # Define clipping range
+        # Define clipping range (to limit learning step)
         ADVANTAGE_CLIP = 1.5
         
         with tf.GradientTape() as tape:
             action_logits, state_value = self.model(state)
             _, next_state_value = self.model(next_state)
 
-            # Critic loss
+            # Critic loss (remove dim)
             state_value = tf.squeeze(state_value)
             next_state_value = tf.squeeze(next_state_value)
 
@@ -323,9 +319,9 @@ class ActorCriticAgent:
             
             # Calculate entropy to encourage exploration
             action_probs = tf.nn.softmax(action_logits)
+            # sane as policy entropy
             entropy = -tf.reduce_sum(action_probs * log_probs, axis=-1)
             
-            # --- MODIFIED LINE ---
             # Actor loss now includes both clipped advantage and the entropy bonus
             actor_loss = -action_log_probs * tf.stop_gradient(clipped_advantage) - self.entropy_coef * entropy
 
@@ -441,7 +437,7 @@ def train_agent(args):
         agent_patch = plt.Rectangle((env.agent_x - 1.5, env.agent_y - 1.5), 2, 2,
                                     facecolor='none', edgecolor='cyan', linewidth=2)
         ax_grid.add_patch(agent_patch)
-        ax_grid.set_title('Current State', fontweight='bold')
+        ax_grid.set_title(f"Last State In Episode", fontweight='bold')
         ax_grid.set_xticks([])
         ax_grid.set_yticks([])
 
@@ -460,7 +456,7 @@ def train_agent(args):
         ax_probs.set_xticks(range(env.num_actions))
         ax_probs.set_xticklabels(action_labels, fontsize=8)
         ax_probs.set_ylabel('Probability')
-        ax_probs.set_title('Action Distribution (Current State)', fontweight='bold')
+        ax_probs.set_title('Action Distribution (Last State)', fontweight='bold')
         ax_probs.grid(axis='y', alpha=0.3)
         
         # Setup value function display (UPDATED)
@@ -469,7 +465,7 @@ def train_agent(args):
                                    bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
         ax_value_display.set_xlim([0, 1])
         ax_value_display.set_ylim([0, 1])
-        ax_value_display.set_title('State Value (Critic) - Current Step', fontweight='bold')
+        ax_value_display.set_title('State Value (Critic) - Last Step', fontweight='bold')
         ax_value_display.axis('off')
         
         # Setup metric plots
@@ -573,7 +569,8 @@ def train_agent(args):
             ep_metrics['td_error'] += float(metrics['td_error'].numpy())
             ep_metrics['density'] += np.mean(env.ca_grid)
             ep_metrics['policy_entropy'] += policy_entropy
-            ep_metrics['state_value'] += current_value # ADDED
+            ep_metrics['state_value'] += current_value 
+            print(episode)
 
             pbar.set_postfix({
                 'Reward': f'{episode_reward:.2f}',
@@ -592,7 +589,7 @@ def train_agent(args):
         policy_entropies.append(float(ep_metrics['policy_entropy'] / args.steps))
         avg_state_values.append(float(ep_metrics['state_value'] / args.steps)) # ADDED
         
-        # Update live plot
+        # Update live plot (modify mod frequency with print frequency desire)
         if args.live_plot and (episode + 1) % 1 == 0:
             episodes_range = range(1, episode + 2)
             
@@ -1064,7 +1061,7 @@ if __name__ == '__main__':
     train_parser = subparsers.add_parser('train', help='Run the training loop.')
     train_parser.add_argument('--episodes', type=int, default=100, help='Number of training episodes.')
     train_parser.add_argument('--steps', type=int, default=200, help='Number of steps per episode.')
-    train_parser.add_argument('--lr', type=float, default=0.0001, help='Learning rate.')
+    train_parser.add_argument('--lr', type=float, default=0.00001, help='Learning rate.')
     train_parser.add_argument('--entropy-coef', type=float, default=0.25, 
                              help='Entropy regularization coefficient.')
     train_parser.add_argument('--grid-size', type=int, default=12, help='Size of the CA grid.')
