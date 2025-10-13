@@ -177,10 +177,24 @@ class CAEnv:
                 reward += 100
                 self.ca_grid.fill(0)
                 self._spawn_target()
+        # elif self.reward_type == 'pattern':
+        #     # Match reward: 1.0 = perfect match, 0.0 = no match
+        #     match_fraction = np.mean(self.ca_grid == self.target_pattern) if self.target_pattern is not None else 0.0
+        #     reward = float(match_fraction)
         elif self.reward_type == 'pattern':
-            # Match reward: 1.0 = perfect match, 0.0 = no match
-            match_fraction = np.mean(self.ca_grid == self.target_pattern) if self.target_pattern is not None else 0.0
-            reward = float(match_fraction)
+            if self.target_pattern is not None:
+                # Calculate the fraction of matching cells
+                match_fraction = np.mean(self.ca_grid == self.target_pattern)
+                
+                # Assign the base reward
+                reward = float(match_fraction)
+                
+                # 💡 Add a large bonus for a perfect match
+                if match_fraction == 1.0:
+                    reward += 100.0
+            else:
+                # If no target pattern is loaded, reward is zero
+                reward = 0.0
 
         self.current_step += 1
         done = (self.current_step >= self.max_steps)
@@ -325,18 +339,47 @@ class PPOAgent:
     def compute_gae(self, rewards, values, dones, last_value):
         """
         Compute Generalized Advantage Estimation (GAE).
+
+        GAE combines TD-error (low variance) and Monte Carlo returns (low bias)
+        into a single, flexible advantage estimator using a combination of 
+        discount factor (gamma) and a decay factor (lambda).
+
+        Args:
+            rewards (list[float]): A list of rewards collected in the rollout (r_t).
+            values (list[float]): A list of state values predicted by the critic (V(s_t)).
+            dones (list[bool]): A list indicating if the episode terminated at step t.
+            last_value (float): The value of the final state in the rollout (V(s_T)).
+        
+        Returns:
+            advantages (list[float]): The estimated advantage for each step (A_t).
+            returns (list[float]): The estimated target returns for the critic (R_t).
         """
         advantages = []
         gae = 0.0
         
+        # values_ext includes all predicted values plus the final state's value V(s_T)
         values_ext = values + [last_value]
         
+        # Iterate backwards through the rollout steps (from T-1 down to 0)
         for t in reversed(range(len(rewards))):
+            # mask is 0 if the episode ended (dones[t]=True), 1 otherwise.
+            # This correctly handles the terminal state: no future reward or value.
             mask = 1.0 - float(dones[t])
+
+            # 1. Compute the TD-residual (delta): r_t + gamma * V(s_{t+1}) * mask - V(s_t)
+            # This is the single-step advantage estimate.
             delta = rewards[t] + self.gamma * values_ext[t + 1] * mask - values_ext[t]
+
+            # 2. Compute the GAE recursively: A_t = delta_t + gamma * lambda * mask * A_{t+1}
+            # This is the key GAE formula, which accumulates the delta, geometrically decaying by (gamma * lambda).
             gae = delta + self.gamma * self.lam * mask * gae
+            # advantages are prepended (inserted at index 0) to maintain correct order (t=0, 1, 2, ...)
             advantages.insert(0, gae)
-        
+
+        # The 'returns' (target for the critic) are simply the advantage plus the current value:
+        # R_t = A_t + V(s_t)
+        # These are also called "GAE returns" or "GAE targets."
+        # The discounting is captured in the advantage calculation
         returns = [adv + val for adv, val in zip(advantages, values)]
         return advantages, returns
 
@@ -344,34 +387,72 @@ class PPOAgent:
     def ppo_update(self, states, actions, old_log_probs, returns, advantages):
         """
         Performs PPO update with clipped objective.
+
+        Args:
+            states (tf.Tensor): Batch of states (observations).
+            actions (tf.Tensor): Batch of actions taken.
+            old_log_probs (tf.Tensor): Log probability of the actions under the *old* policy.
+            returns (tf.Tensor): Discounted cumulative rewards (targets for the value function)
+            advantages (tf.Tensor): Estimated advantage of the taken actions.
         """
+        # Start recording operations for automatic differentiation (gradient calculation)
         with tf.GradientTape() as tape:
+            # Forward pass through the model to get new action logits and current state values
             logits, values = self.model(states)
+            # Squeeze the value tensor to match the shape of 'returns' (usually from [Batch, 1] to [Batch])
             values = tf.squeeze(values, axis=-1)
             
-            # Policy loss
+            # Policy loss calculation: This is the PPO clipped objective
+            # Convert logits to probabilities
             probs = tf.nn.softmax(logits)
+            # Create a one-hot encoding for the actions taken
             actions_onehot = tf.one_hot(actions, self.num_actions)
+            # Get the probability of the specific action that was taken in each state
             selected_probs = tf.reduce_sum(probs * actions_onehot, axis=1)
-            new_log_probs = tf.math.log(selected_probs + 1e-8)
+            # Calculate the log probability of the action under the *new* policy
+            new_log_probs = tf.math.log(selected_probs + 1e-8)  # Add epsilon for numerical stability
             
+            # Importance sampling ratio: ratio = pi_new(a|s) / pi_old(a|s)
             ratio = tf.exp(new_log_probs - old_log_probs)
+            # First term of the clipped objective: ratio * advantage
             surr1 = ratio * advantages
+            # Second term of the clipped objective: clipped_ratio * advantage
+            # This clips the ratio to prevent the new policy from changing too much from the old one
             surr2 = tf.clip_by_value(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * advantages
+
+            # PPO Policy Loss: The objective is maximized, so we take the minimum of surr1 and surr2
+            # The final loss is *negative* because standard optimizers perform *gradient descent* (minimization).
+            # Since policy_loss=−(PPO Objective), a positive PPO objective results in a negative policy loss.
+            # The PPO objective is positive when the policy update successfully increases the probability of actions that had a positive advantage
+            # 
+            # Positive Loss = Bad
+            # The new policy π_new decreased the probability of an action that had a positive advantage or
+            # Increased the probability of an action that had a negative advantage...
+            # But the optimizer with shift the policy back
+            #
+            # Negative Loss = Good
+            # The new policy π_new successfully increased the probability of an action that had a positive advantage...
+            # Which means the optimizer is successfully maximizing the objective
             policy_loss = -tf.reduce_mean(tf.minimum(surr1, surr2))
             
-            # Value loss
+            # Value loss calculation (Mean Squared Error)
+            # This minimizes the difference between the predicted state value and the actual 'return' (target)
             value_loss = tf.reduce_mean(tf.square(returns - values))
             
-            # Entropy bonus
+            # Entropy bonus calculation
+            # Encourages exploration by penalizing deterministic policies (higher entropy = more random policy)
             entropy = -tf.reduce_mean(tf.reduce_sum(probs * tf.math.log(probs + 1e-8), axis=1))
-            
-            # Total loss
+
+            # Total loss: Combination of the three terms
+            # policy_loss (minimized), value_loss (minimized), and -entropy (maximized via minimization of its negative)
             total_loss = policy_loss + self.vf_coef * value_loss - self.entropy_coef * entropy
 
+        # Calculate gradients of the total loss with respect to the model's trainable parameters
         grads = tape.gradient(total_loss, self.model.trainable_variables)
+        # Apply the gradients to update the model's weights
         self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
         
+        # Return the components for logging and monitoring
         return {
             'policy_loss': policy_loss,
             'value_loss': value_loss,
@@ -525,10 +606,11 @@ def train_agent(args):
             ax_value_display = fig.add_subplot(gs[0, 3])
             
         ax_reward = fig.add_subplot(gs[1, 0])
-        ax_loss = fig.add_subplot(gs[1, 1])
+        ax_loss_policy = fig.add_subplot(gs[1, 1])
         ax_entropy_metric = fig.add_subplot(gs[1, 2])
         ax_density = fig.add_subplot(gs[1, 3])
         ax_value_avg = fig.add_subplot(gs[2, 0])
+        ax_loss_value = fig.add_subplot(gs[2, 1])
         
         fig.suptitle('PPO Training Progress (Live)', fontsize=16, fontweight='bold')
         
@@ -566,8 +648,10 @@ def train_agent(args):
         
         lines = {
             'reward': ax_reward.plot([], [], 'b-', linewidth=2)[0],
-            'policy_loss': ax_loss.plot([], [], 'r-', label='Policy', linewidth=2)[0],
-            'value_loss': ax_loss.plot([], [], 'g-', label='Value', linewidth=2)[0],
+            # 'policy_loss': ax_loss_policy.plot([], [], 'r-', label='Policy', linewidth=2)[0],
+            'policy_loss': ax_loss_policy.plot([], [], 'r-',)[0],
+            # 'value_loss': ax_loss_value.plot([], [], 'g-', label='Value', linewidth=2)[0],
+            'value_loss': ax_loss_value.plot([], [], 'g-')[0],
             'entropy': ax_entropy_metric.plot([], [], 'orange', linewidth=2)[0],
             'density': ax_density.plot([], [], 'darkgreen', linewidth=2)[0],
             'avg_value': ax_value_avg.plot([], [], 'dodgerblue', linewidth=2)[0],
@@ -575,9 +659,12 @@ def train_agent(args):
         
         ax_reward.set_title('Episode Reward', fontweight='bold')
         ax_reward.grid(True, alpha=0.3)
-        ax_loss.set_title('Losses', fontweight='bold')
-        ax_loss.legend()
-        ax_loss.grid(True, alpha=0.3)
+        ax_loss_policy.set_title('Policy Net Loss', fontweight='bold')
+        # ax_loss_policy.legend()
+        ax_loss_policy.grid(True, alpha=0.3)
+        ax_loss_value.set_title('Value Net Loss', fontweight='bold')
+        # ax_loss_value.legend()
+        ax_loss_value.grid(True, alpha=0.3)
         ax_entropy_metric.set_title('Policy Entropy', fontweight='bold')
         ax_entropy_metric.grid(True, alpha=0.3)
         ax_density.set_title('Grid Density', fontweight='bold')
@@ -727,7 +814,7 @@ def train_agent(args):
                 lines['avg_value'].set_data(episodes_range, avg_state_values)
 
                 # Rescale all graph axes
-                for ax in [ax_reward, ax_loss, ax_entropy_metric, ax_density, ax_value_avg]:
+                for ax in [ax_reward, ax_loss_policy, ax_loss_value, ax_entropy_metric, ax_density, ax_value_avg]:
                     ax.relim()
                     ax.autoscale_view()
 
@@ -769,8 +856,8 @@ def train_agent(args):
     
     plt.subplot(3, 2, 2)
     plt.plot(policy_losses, label='Policy Loss', linewidth=2)
-    plt.plot(value_losses, label='Value Loss', linewidth=2)
-    plt.title('Training Losses', fontweight='bold')
+    # plt.plot(value_losses, label='Value Loss', linewidth=2)
+    plt.title('Training Losses (Policy)', fontweight='bold')
     plt.legend()
     plt.grid(True, alpha=0.3)
     
@@ -787,6 +874,13 @@ def train_agent(args):
     plt.subplot(3, 2, 5)
     plt.plot(avg_state_values, linewidth=2, color='dodgerblue')
     plt.title('Average State Value', fontweight='bold')
+    plt.grid(True, alpha=0.3)
+
+    plt.subplot(3, 2, 6)
+    # plt.plot(policy_losses, label='Policy Loss', linewidth=2)
+    plt.plot(value_losses, label='Value Loss', linewidth=2)
+    plt.title('Training Losses (Value Net)', fontweight='bold')
+    plt.legend()
     plt.grid(True, alpha=0.3)
     
     plt.tight_layout()
@@ -1183,11 +1277,11 @@ if __name__ == '__main__':
     train_parser = subparsers.add_parser('train', help='Run PPO training.')
     train_parser.add_argument('--episodes', type=int, default=100, help='Number of training episodes.')
     train_parser.add_argument('--rollout-steps', type=int, default=10, help='Steps per rollout/episode.')
-    train_parser.add_argument('--lr', type=float, default=0.0003, help='Learning rate.')
+    train_parser.add_argument('--lr', type=float, default=0.0001, help='Learning rate.')
     train_parser.add_argument('--gamma', type=float, default=0.99, help='Discount factor.')
     train_parser.add_argument('--lam', type=float, default=0.95, help='GAE lambda.')
     train_parser.add_argument('--clip-eps', type=float, default=0.2, help='PPO clip epsilon.')
-    train_parser.add_argument('--entropy-coef', type=float, default=0.05, help='Entropy coefficient.')
+    train_parser.add_argument('--entropy-coef', type=float, default=0.1, help='Entropy coefficient.')
     train_parser.add_argument('--vf-coef', type=float, default=0.5, help='Value function coefficient.')
     train_parser.add_argument('--ppo-epochs', type=int, default=4, help='PPO update epochs per rollout.')
     train_parser.add_argument('--batch-size', type=int, default=64, help='Minibatch size for PPO updates.')
