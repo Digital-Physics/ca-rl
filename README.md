@@ -162,7 +162,10 @@ show every step of every episode (slow)
 ```
 uv run rl_ca.py train --reward pattern --pattern-file custom_pattern_12x12.npy --live-plot 0
 ```
-#
+
+```
+uv run rl_ca.py train --episodes 150 --live-plot 5 --reward pattern --pattern-file custom_pattern_12x12_advanced.npy --rollout-steps 50
+```
 
 ### RL Training (from Supervised Learning pre-training)
 ```

@@ -68,11 +68,13 @@ class CAEnv:
     Represents the Cellular Automata (CA) environment.
     """
     def __init__(self, grid_size=12, initial_density=0.4, rules_name='conway', 
-                 reward_type='entropy', target_pattern=None):
+                 reward_type='entropy', target_pattern=None, max_steps=10):
         self.grid_size = grid_size
         self.initial_density = initial_density
         self.rules_name = rules_name
         self.reward_type = reward_type
+        self.max_steps = max_steps
+        self.current_step = 0
 
         self.ca_rules = {
             'conway': {'birth': [3], 'survive': [2, 3]},
@@ -120,6 +122,7 @@ class CAEnv:
 
         self.agent_x = self.grid_size // 2
         self.agent_y = self.grid_size // 2
+        self.current_step = 0
 
         self.has_target = False
         self.target_x, self.target_y = 0, 0
@@ -179,7 +182,9 @@ class CAEnv:
             match_fraction = np.mean(self.ca_grid == self.target_pattern) if self.target_pattern is not None else 0.0
             reward = float(match_fraction)
 
-        done = False
+        self.current_step += 1
+        done = (self.current_step >= self.max_steps)
+
         return self._get_state(), reward, done, {}
 
     def _update_ca_fast(self, write_pattern=None):
@@ -258,8 +263,8 @@ class PPOAgent:
     """
     PPO (Proximal Policy Optimization) agent with enhanced training stability.
     """
-    def __init__(self, state_shape, num_actions, learning_rate=0.0003, gamma=0.99, 
-                 lam=0.95, clip_eps=0.2, entropy_coef=0.01, vf_coef=0.5):
+    def __init__(self, state_shape, num_actions, learning_rate=0.0001, gamma=0.99, 
+                 lam=0.95, clip_eps=0.1, entropy_coef=0.01, vf_coef=0.5):
         self.state_shape = state_shape
         self.num_actions = num_actions
         self.learning_rate = learning_rate
@@ -396,7 +401,7 @@ def supervised_pretrain(args):
     next_states = data.get('next_states', None)
     print(f"Loaded {len(states)} samples from {args.data_file}")
 
-    env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward)
+    env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward, max_steps=1)
     
     # Load pattern if needed
     if args.reward == 'pattern' and hasattr(args, 'pattern_file') and args.pattern_file:
@@ -470,7 +475,7 @@ def supervised_pretrain(args):
 def train_agent(args):
     """Main PPO training loop with rollout collection and minibatch updates."""
     print("--- Starting PPO Training ---")
-    env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward)
+    env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward, max_steps=args.rollout_steps)
     
     # Load pattern if reward_type is 'pattern'
     if args.reward == 'pattern' and args.pattern_file:
@@ -601,6 +606,8 @@ def train_agent(args):
         for step in pbar:
             action, log_prob, value = agent.get_action_and_value(state)
             next_state, reward, done, _ = env.step(action)
+
+            # print(reward, value, done)
             
             states_buffer.append(state[0])  # Remove batch dimension
             actions_buffer.append(action)
@@ -840,7 +847,7 @@ def run_demo_auto(args):
     mpl.rcParams['keymap.fullscreen'] = []
 
     print("--- Running Autonomous Demo ---")
-    env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward)
+    env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward, max_steps=args.steps)
 
     if args.pattern_file and os.path.exists(args.pattern_file):
         env.load_pattern(args.pattern_file)
@@ -976,7 +983,7 @@ def run_demo_manual(args):
     mpl.rcParams['keymap.fullscreen'] = []
 
     print("--- Running Manual Demo ---")
-    env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward)
+    env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward, max_steps=args.steps)
 
     if args.pattern_file and os.path.exists(args.pattern_file):
         env.load_pattern(args.pattern_file)
@@ -1180,7 +1187,7 @@ if __name__ == '__main__':
     train_parser.add_argument('--gamma', type=float, default=0.99, help='Discount factor.')
     train_parser.add_argument('--lam', type=float, default=0.95, help='GAE lambda.')
     train_parser.add_argument('--clip-eps', type=float, default=0.2, help='PPO clip epsilon.')
-    train_parser.add_argument('--entropy-coef', type=float, default=0.01, help='Entropy coefficient.')
+    train_parser.add_argument('--entropy-coef', type=float, default=0.05, help='Entropy coefficient.')
     train_parser.add_argument('--vf-coef', type=float, default=0.5, help='Value function coefficient.')
     train_parser.add_argument('--ppo-epochs', type=int, default=4, help='PPO update epochs per rollout.')
     train_parser.add_argument('--batch-size', type=int, default=64, help='Minibatch size for PPO updates.')
