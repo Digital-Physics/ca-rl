@@ -1,5 +1,19 @@
-# import matplotlib
-# matplotlib.use('TkAgg') 
+#!/usr/bin/env python3
+"""
+rl_ca.py
+
+Enhanced Cellular Automata RL with PPO (Proximal Policy Optimization)
+Integrates PPO algorithm while preserving all original functionality including:
+- Multiple reward types (entropy, maxwell_demon, target_practice, pattern)
+- Live visualization during training
+- Manual and autonomous demos
+- Pattern creator
+- Supervised pretraining
+- Recording capabilities
+
+Author: Enhanced by Claude with PPO integration
+"""
+
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
@@ -18,8 +32,7 @@ import json
 from tensorflow.keras.losses import SparseCategoricalCrossentropy
 from tensorflow.keras.metrics import SparseCategoricalAccuracy
 
-
-# Enable interactive mode once for drawing some images during training
+# Enable interactive mode for drawing during training
 plt.ion()
 
 # Suppress TensorFlow logging
@@ -78,7 +91,6 @@ class CAEnv:
             if target_pattern is not None:
                 self.target_pattern = target_pattern
             else:
-                # Default simple pattern if none provided
                 self.target_pattern = None
         else:
             self.target_pattern = None
@@ -87,7 +99,6 @@ class CAEnv:
 
     def _apply_ca_rules_fast(self, grid):
         """Fast CA rule application using convolution."""
-        # Use 'wrap' mode for toroidal boundary
         neighbor_counts = convolve2d(grid, self.ca_kernel, mode='same', boundary='wrap')
         
         birth_mask = np.isin(neighbor_counts, self.rules['birth']) & (grid == 0)
@@ -164,8 +175,9 @@ class CAEnv:
                 self.ca_grid.fill(0)
                 self._spawn_target()
         elif self.reward_type == 'pattern':
-            binary_cross_entropy = self._calculate_pattern_bce()
-            reward = -binary_cross_entropy
+            # Match reward: 1.0 = perfect match, 0.0 = no match
+            match_fraction = np.mean(self.ca_grid == self.target_pattern) if self.target_pattern is not None else 0.0
+            reward = float(match_fraction)
 
         done = False
         return self._get_state(), reward, done, {}
@@ -205,9 +217,10 @@ class CAEnv:
         epsilon = 1e-7
         current = np.clip(current, epsilon, 1 - epsilon)
         
+        # BCE formula: -mean(target * log(current) + (1-target) * log(1-current))
         bce = -np.mean(target * np.log(current) + (1 - target) * np.log(1 - current))
         
-        return bce
+        return float(bce)
 
     def _spawn_target(self):
         self.target_x = np.random.randint(0, self.grid_size - 2)
@@ -240,21 +253,24 @@ class CAEnv:
         return False
 
 
-# --- Actor-Critic Agent ---
-class ActorCriticAgent:
+# --- PPO Actor-Critic Agent ---
+class PPOAgent:
     """
-    The Actor-Critic agent with enhanced metrics extraction.
+    PPO (Proximal Policy Optimization) agent with enhanced training stability.
     """
-    def __init__(self, state_shape, num_actions, learning_rate=0.001, gamma=0.95, entropy_coef=0.01):
+    def __init__(self, state_shape, num_actions, learning_rate=0.0003, gamma=0.99, 
+                 lam=0.95, clip_eps=0.2, entropy_coef=0.01, vf_coef=0.5):
         self.state_shape = state_shape
         self.num_actions = num_actions
         self.learning_rate = learning_rate
         self.gamma = gamma
+        self.lam = lam  # GAE lambda
+        self.clip_eps = clip_eps  # PPO clip epsilon
         self.entropy_coef = entropy_coef
+        self.vf_coef = vf_coef
 
         self._build_networks()
-        self.optimizer = keras.optimizers.Adam(learning_rate=self.learning_rate, clipnorm=1.0)
-        self.huber_loss = keras.losses.Huber()
+        self.optimizer = keras.optimizers.Adam(learning_rate=self.learning_rate, clipnorm=0.5)
 
     def _build_networks(self):
         input_layer = layers.Input(shape=self.state_shape)
@@ -281,6 +297,19 @@ class ActorCriticAgent:
         action = tf.random.categorical(logits, 1)[0, 0].numpy()
         return action
 
+    def get_action_and_value(self, state):
+        """Get action, log probability, and value for PPO training."""
+        logits, value = self.model(state)
+        probs = tf.nn.softmax(logits)
+        action = tf.random.categorical(logits, 1)[0, 0]
+        
+        # Calculate log probability
+        action_onehot = tf.one_hot(action, self.num_actions)
+        selected_prob = tf.reduce_sum(probs * action_onehot, axis=1)
+        log_prob = tf.math.log(selected_prob + 1e-8)
+        
+        return action.numpy(), log_prob.numpy()[0], value.numpy()[0, 0]
+
     def get_action_probs_and_value(self, state):
         """Get action probabilities and state value for visualization."""
         logits, value = self.model(state)
@@ -288,59 +317,63 @@ class ActorCriticAgent:
         value = value.numpy()[0, 0]
         return action_probs, value
 
-    @tf.function
-    def train_step(self, state, action, reward, next_state, done):
+    def compute_gae(self, rewards, values, dones, last_value):
         """
-        Performs a single training step (Actor-Critic) with Advantage Clipping
-        AND Entropy Regularization.
+        Compute Generalized Advantage Estimation (GAE).
         """
-        # Define clipping range (to limit learning step)
-        ADVANTAGE_CLIP = 1.5
+        advantages = []
+        gae = 0.0
         
+        values_ext = values + [last_value]
+        
+        for t in reversed(range(len(rewards))):
+            mask = 1.0 - float(dones[t])
+            delta = rewards[t] + self.gamma * values_ext[t + 1] * mask - values_ext[t]
+            gae = delta + self.gamma * self.lam * mask * gae
+            advantages.insert(0, gae)
+        
+        returns = [adv + val for adv, val in zip(advantages, values)]
+        return advantages, returns
+
+    @tf.function
+    def ppo_update(self, states, actions, old_log_probs, returns, advantages):
+        """
+        Performs PPO update with clipped objective.
+        """
         with tf.GradientTape() as tape:
-            action_logits, state_value = self.model(state)
-            _, next_state_value = self.model(next_state)
-
-            # Critic loss (remove dim)
-            state_value = tf.squeeze(state_value)
-            next_state_value = tf.squeeze(next_state_value)
-
-            td_target = reward + self.gamma * next_state_value * (1 - tf.cast(done, tf.float32))
-            advantage = td_target - state_value
+            logits, values = self.model(states)
+            values = tf.squeeze(values, axis=-1)
             
-            critic_loss = self.huber_loss(tf.expand_dims(td_target, 0), tf.expand_dims(state_value, 0))
-
-            # Actor loss
-            action_indices = tf.stack([tf.range(state.shape[0], dtype=tf.int32), tf.cast(action, tf.int32)], axis=1)
-            log_probs = tf.nn.log_softmax(action_logits)
-            action_log_probs = tf.gather_nd(log_probs, action_indices)
+            # Policy loss
+            probs = tf.nn.softmax(logits)
+            actions_onehot = tf.one_hot(actions, self.num_actions)
+            selected_probs = tf.reduce_sum(probs * actions_onehot, axis=1)
+            new_log_probs = tf.math.log(selected_probs + 1e-8)
             
-            # Clip the advantage to stabilize training
-            clipped_advantage = tf.clip_by_value(advantage, 
-                                                clip_value_min=-ADVANTAGE_CLIP, 
-                                                clip_value_max=ADVANTAGE_CLIP)
+            ratio = tf.exp(new_log_probs - old_log_probs)
+            surr1 = ratio * advantages
+            surr2 = tf.clip_by_value(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * advantages
+            policy_loss = -tf.reduce_mean(tf.minimum(surr1, surr2))
             
-            # Calculate entropy to encourage exploration
-            action_probs = tf.nn.softmax(action_logits)
-            # sane as policy entropy
-            entropy = -tf.reduce_sum(action_probs * log_probs, axis=-1)
+            # Value loss
+            value_loss = tf.reduce_mean(tf.square(returns - values))
             
-            # Actor loss now includes both clipped advantage and the entropy bonus
-            actor_loss = -action_log_probs * tf.stop_gradient(clipped_advantage) - self.entropy_coef * entropy
-
-            total_loss = actor_loss + critic_loss
+            # Entropy bonus
+            entropy = -tf.reduce_mean(tf.reduce_sum(probs * tf.math.log(probs + 1e-8), axis=1))
+            
+            # Total loss
+            total_loss = policy_loss + self.vf_coef * value_loss - self.entropy_coef * entropy
 
         grads = tape.gradient(total_loss, self.model.trainable_variables)
         self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
         
-        # Return metrics for monitoring
         return {
-            'actor_loss': actor_loss,
-            'critic_loss': critic_loss,
-            'advantage': clipped_advantage, # Return the clipped value for monitoring
+            'policy_loss': policy_loss,
+            'value_loss': value_loss,
             'entropy': entropy,
-            'td_error': tf.abs(advantage) # TD error uses the unclipped advantage
+            'total_loss': total_loss
         }
+
 
 def supervised_pretrain(args):
     """
@@ -364,7 +397,12 @@ def supervised_pretrain(args):
     print(f"Loaded {len(states)} samples from {args.data_file}")
 
     env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward)
-    agent = ActorCriticAgent(
+    
+    # Load pattern if needed
+    if args.reward == 'pattern' and hasattr(args, 'pattern_file') and args.pattern_file:
+        env.load_pattern(args.pattern_file)
+    
+    agent = PPOAgent(
         state_shape=(args.grid_size, args.grid_size, 2),
         num_actions=env.num_actions,
         learning_rate=args.lr,
@@ -401,7 +439,6 @@ def supervised_pretrain(args):
                 p_loss = policy_loss_fn(a_batch, logits)
 
                 if ns_batch is not None:
-                    # Bootstrap target: r + γ * V(next)
                     _, next_values = agent.model(ns_batch, training=False)
                     target_values = r_batch + gamma * tf.squeeze(next_values)
                 else:
@@ -429,23 +466,28 @@ def supervised_pretrain(args):
     agent.model.save_weights(args.save_weights)
     print(f"Saved final supervised weights to {args.save_weights}")
 
+
 def train_agent(args):
-    """Main training loop with enhanced live visualization and metrics."""
-    print("--- Starting Training ---")
+    """Main PPO training loop with rollout collection and minibatch updates."""
+    print("--- Starting PPO Training ---")
     env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, reward_type=args.reward)
     
     # Load pattern if reward_type is 'pattern'
     if args.reward == 'pattern' and args.pattern_file:
         env.load_pattern(args.pattern_file)
 
-    agent = ActorCriticAgent(
+    agent = PPOAgent(
         state_shape=(args.grid_size, args.grid_size, 2),
         num_actions=env.num_actions,
         learning_rate=args.lr,
-        entropy_coef=args.entropy_coef
+        gamma=args.gamma,
+        lam=args.lam,
+        clip_eps=args.clip_eps,
+        entropy_coef=args.entropy_coef,
+        vf_coef=args.vf_coef
     )
 
-    # If provided, load supervised / pretrained weights to initialize RL
+    # Load pretrained weights if provided
     if getattr(args, 'pretrained_weights', None):
         if os.path.exists(args.pretrained_weights):
             print(f"Loading pretrained weights from {args.pretrained_weights}")
@@ -454,15 +496,12 @@ def train_agent(args):
             print(f"Pretrained weights not found at {args.pretrained_weights} (continuing without).")
 
     # Metrics tracking
-    total_rewards = []
-    actor_losses = []
-    critic_losses = []
-    advantages = []
+    episode_rewards = []
+    policy_losses = []
+    value_losses = []
     entropies = []
-    td_errors = []
     density_values = []
-    policy_entropies = []
-    avg_state_values = [] 
+    avg_state_values = []
 
     # Setup live plotting if enabled
     if args.live_plot is not None:
@@ -483,20 +522,15 @@ def train_agent(args):
         ax_reward = fig.add_subplot(gs[1, 0])
         ax_loss = fig.add_subplot(gs[1, 1])
         ax_entropy_metric = fig.add_subplot(gs[1, 2])
-        ax_td = fig.add_subplot(gs[1, 3])
+        ax_density = fig.add_subplot(gs[1, 3])
+        ax_value_avg = fig.add_subplot(gs[2, 0])
         
-        ax_advantage = fig.add_subplot(gs[2, 0])
-        ax_density = fig.add_subplot(gs[2, 1]) 
-        ax_policy_entropy = fig.add_subplot(gs[2, 2]) 
-        ax_avg_value = fig.add_subplot(gs[2, 3])
-        
-        fig.suptitle('Training Progress (Live)', fontsize=16, fontweight='bold')
+        fig.suptitle('PPO Training Progress (Live)', fontsize=16, fontweight='bold')
         
         grid_img = ax_grid.imshow(env.ca_grid, cmap='binary', vmin=0, vmax=1, interpolation='nearest')
         agent_patch = plt.Rectangle((env.agent_x - 1.5, env.agent_y - 1.5), 2, 2,
                                     facecolor='none', edgecolor='cyan', linewidth=2)
         ax_grid.add_patch(agent_patch)
-        # ax_grid.set_title(f"Live State", fontweight='bold')
         title_text = ax_grid.set_title("Episode 0 | Step 0", fontweight='bold')
         ax_grid.set_xticks([])
         ax_grid.set_yticks([])
@@ -527,66 +561,64 @@ def train_agent(args):
         
         lines = {
             'reward': ax_reward.plot([], [], 'b-', linewidth=2)[0],
-            'actor_loss': ax_loss.plot([], [], 'r-', label='Actor', linewidth=2)[0],
-            'critic_loss': ax_loss.plot([], [], 'g-', label='Critic', linewidth=2)[0],
+            'policy_loss': ax_loss.plot([], [], 'r-', label='Policy', linewidth=2)[0],
+            'value_loss': ax_loss.plot([], [], 'g-', label='Value', linewidth=2)[0],
             'entropy': ax_entropy_metric.plot([], [], 'orange', linewidth=2)[0],
-            'td_error': ax_td.plot([], [], 'brown', linewidth=2)[0],
-            'advantage': ax_advantage.plot([], [], 'purple', linewidth=2)[0],
             'density': ax_density.plot([], [], 'darkgreen', linewidth=2)[0],
-            'policy_entropy': ax_policy_entropy.plot([], [], 'crimson', linewidth=2)[0],
-            'avg_value': ax_avg_value.plot([], [], 'dodgerblue', linewidth=2)[0],
+            'avg_value': ax_value_avg.plot([], [], 'dodgerblue', linewidth=2)[0],
         }
         
-        ax_reward.set_title('Total Reward per Episode', fontweight='bold')
+        ax_reward.set_title('Episode Reward', fontweight='bold')
         ax_reward.grid(True, alpha=0.3)
         ax_loss.set_title('Losses', fontweight='bold')
         ax_loss.legend()
         ax_loss.grid(True, alpha=0.3)
-        ax_entropy_metric.set_title('Training Entropy (A2C)', fontweight='bold')
+        ax_entropy_metric.set_title('Policy Entropy', fontweight='bold')
         ax_entropy_metric.grid(True, alpha=0.3)
-        ax_td.set_title('TD Error', fontweight='bold')
-        ax_td.grid(True, alpha=0.3)
-        ax_advantage.set_title('Average Advantage', fontweight='bold')
-        ax_advantage.grid(True, alpha=0.3)
         ax_density.set_title('Grid Density', fontweight='bold')
         ax_density.grid(True, alpha=0.3)
-        ax_policy_entropy.set_title('Policy Entropy (H(π))', fontweight='bold')
-        ax_policy_entropy.grid(True, alpha=0.3)
-        ax_avg_value.set_title('Average State Value (V(s))', fontweight='bold')
-        ax_avg_value.grid(True, alpha=0.3)
+        ax_value_avg.set_title('Average State Value', fontweight='bold')
+        ax_value_avg.grid(True, alpha=0.3)
         plt.pause(0.1)
 
+    # PPO Training loop
+    total_timesteps = 0
     for episode in range(args.episodes):
+        # Collect rollout
+        states_buffer = []
+        actions_buffer = []
+        log_probs_buffer = []
+        rewards_buffer = []
+        values_buffer = []
+        dones_buffer = []
+        
         state = env.reset()
         episode_reward = 0.0
-        ep_metrics = {'actor_loss': 0.0, 'critic_loss': 0.0, 'advantage': 0.0, 'entropy': 0.0, 'td_error': 0.0, 'density': 0.0, 'policy_entropy': 0.0, 'state_value': 0.0}
-
-        pbar = tqdm(range(args.steps), desc=f"Episode {episode + 1}/{args.episodes}")
+        episode_density = 0.0
+        episode_value_sum = 0.0
+        
+        pbar = tqdm(range(args.rollout_steps), desc=f"Episode {episode + 1}/{args.episodes}")
         for step in pbar:
-            action = agent.select_action(state)
+            action, log_prob, value = agent.get_action_and_value(state)
             next_state, reward, done, _ = env.step(action)
             
-            metrics = agent.train_step(state, np.array([action]), np.array([reward], dtype=np.float32), next_state, np.array([done]))
+            states_buffer.append(state[0])  # Remove batch dimension
+            actions_buffer.append(action)
+            log_probs_buffer.append(log_prob)
+            rewards_buffer.append(reward)
+            values_buffer.append(value)
+            dones_buffer.append(done)
             
-            action_probs_current, current_value = agent.get_action_probs_and_value(state)
-            action_probs_current = np.clip(action_probs_current, 1e-10, 1.0) 
-            policy_entropy = -np.sum(action_probs_current * np.log(action_probs_current))
-
+            episode_reward += reward
+            episode_density += np.mean(env.ca_grid)
+            episode_value_sum += value
+            
             state = next_state
-            episode_reward += float(reward)
+            total_timesteps += 1
             
-            ep_metrics['actor_loss'] += float(metrics['actor_loss'].numpy())
-            ep_metrics['critic_loss'] += float(metrics['critic_loss'].numpy())
-            ep_metrics['advantage'] += float(metrics['advantage'].numpy())
-            ep_metrics['entropy'] += float(metrics['entropy'].numpy())
-            ep_metrics['td_error'] += float(metrics['td_error'].numpy())
-            ep_metrics['density'] += np.mean(env.ca_grid)
-            ep_metrics['policy_entropy'] += policy_entropy
-            ep_metrics['state_value'] += current_value 
+            pbar.set_postfix({'Reward': f'{episode_reward:.2f}', 'Value': f'{value:.2f}'})
             
-            pbar.set_postfix({'Reward': f'{episode_reward:.2f}', 'Entropy': f'{ep_metrics["entropy"] / (step + 1):.3f}', 'Value': f'{current_value:.2f}'})
-
-            # Visualize agent/grid state on every step if live_plot is 0
+            # Live visualization at step level if live_plot == 0
             if args.live_plot == 0:
                 grid_img.set_data(env.ca_grid)
                 agent_patch.set_xy((env.agent_x - 1.5, env.agent_y - 1.5))
@@ -597,66 +629,122 @@ def train_agent(args):
                 title_text.set_text(f"Episode {episode + 1} | Step {step + 1} | Reward: {episode_reward:.3f}")
                 fig.canvas.draw()
                 plt.pause(0.01)
-
-        total_rewards.append(episode_reward)
-        actor_losses.append(ep_metrics['actor_loss'] / args.steps)
-        critic_losses.append(ep_metrics['critic_loss'] / args.steps)
-        advantages.append(ep_metrics['advantage'] / args.steps)
-        entropies.append(ep_metrics['entropy'] / args.steps)
-        td_errors.append(ep_metrics['td_error'] / args.steps)
-        density_values.append(float(ep_metrics['density'] / args.steps))
-        policy_entropies.append(float(ep_metrics['policy_entropy'] / args.steps))
-        avg_state_values.append(float(ep_metrics['state_value'] / args.steps))
         
-        # --- MODIFIED SECTION ---
-        # Update metric graphs at the end of the episode based on frequency.
-        # This now triggers every episode for `live_plot == 0` or every N episodes for `live_plot > 0`.
+        # Get last value for GAE
+        _, _, last_value = agent.get_action_and_value(state)
+        
+        # Compute GAE
+        advantages, returns = agent.compute_gae(
+            rewards_buffer, values_buffer, dones_buffer, last_value
+        )
+        
+        # Convert to numpy arrays
+        states_array = np.array(states_buffer, dtype=np.float32)
+        actions_array = np.array(actions_buffer, dtype=np.int32)
+        old_log_probs_array = np.array(log_probs_buffer, dtype=np.float32)
+        returns_array = np.array(returns, dtype=np.float32)
+        advantages_array = np.array(advantages, dtype=np.float32)
+        
+        # Normalize advantages
+        advantages_array = (advantages_array - advantages_array.mean()) / (advantages_array.std() + 1e-8)
+        
+        # PPO update with minibatches
+        num_samples = len(states_array)
+        indices = np.arange(num_samples)
+        
+        epoch_policy_loss = 0.0
+        epoch_value_loss = 0.0
+        epoch_entropy = 0.0
+        num_updates = 0
+        
+        for epoch in range(args.ppo_epochs):
+            np.random.shuffle(indices)
+            for start in range(0, num_samples, args.batch_size):
+                end = min(start + args.batch_size, num_samples)
+                batch_indices = indices[start:end]
+                
+                metrics = agent.ppo_update(
+                    states_array[batch_indices],
+                    actions_array[batch_indices],
+                    old_log_probs_array[batch_indices],
+                    returns_array[batch_indices],
+                    advantages_array[batch_indices]
+                )
+                
+                epoch_policy_loss += float(metrics['policy_loss'])
+                epoch_value_loss += float(metrics['value_loss'])
+                epoch_entropy += float(metrics['entropy'])
+                num_updates += 1
+        
+        # Average metrics over updates
+        avg_policy_loss = epoch_policy_loss / num_updates
+        avg_value_loss = epoch_value_loss / num_updates
+        avg_entropy = epoch_entropy / num_updates
+        
+        # Track episode metrics
+        episode_rewards.append(episode_reward)
+        policy_losses.append(avg_policy_loss)
+        value_losses.append(avg_value_loss)
+        entropies.append(avg_entropy)
+        density_values.append(episode_density / args.rollout_steps)
+        avg_state_values.append(episode_value_sum / args.rollout_steps)
+        
+        # Update visualizations
         if args.live_plot is not None:
             update_this_episode = False
             if args.live_plot == 0:
+                # Already updated during steps, just update metrics graphs
                 update_this_episode = True
-            elif args.live_plot > 0 and (episode + 1) % args.live_plot == 0:
+            elif (episode + 1) % args.live_plot == 0:
+                # Update everything including final state view
                 update_this_episode = True
 
             if update_this_episode:
                 episodes_range = range(1, episode + 2)
                 
-                # Also update the agent view to show the final state of the episode
-                grid_img.set_data(env.ca_grid)
-                agent_patch.set_xy((env.agent_x - 1.5, env.agent_y - 1.5))
-                action_probs, current_value_viz = agent.get_action_probs_and_value(state)
-                for bar, prob in zip(bars, action_probs):
-                    bar.set_height(prob)
-                value_text.set_text(f'V(s) = {current_value_viz:.3f}')
+                # Update the agent view to show the final state (only if not live_plot==0, since it's already updated)
+                if args.live_plot != 0:
+                    grid_img.set_data(env.ca_grid)
+                    agent_patch.set_xy((env.agent_x - 1.5, env.agent_y - 1.5))
+                    action_probs, current_value_viz = agent.get_action_probs_and_value(state)
+                    for bar, prob in zip(bars, action_probs):
+                        bar.set_height(prob)
+                    value_text.set_text(f'V(s) = {current_value_viz:.3f}')
 
                 # Update all metric graphs
-                lines['reward'].set_data(episodes_range, total_rewards)
-                lines['actor_loss'].set_data(episodes_range, actor_losses)
-                lines['critic_loss'].set_data(episodes_range, critic_losses)
+                lines['reward'].set_data(episodes_range, episode_rewards)
+                lines['policy_loss'].set_data(episodes_range, policy_losses)
+                lines['value_loss'].set_data(episodes_range, value_losses)
                 lines['entropy'].set_data(episodes_range, entropies)
-                lines['td_error'].set_data(episodes_range, td_errors)
-                lines['advantage'].set_data(episodes_range, advantages)
                 lines['density'].set_data(episodes_range, density_values)
-                lines['policy_entropy'].set_data(episodes_range, policy_entropies)
                 lines['avg_value'].set_data(episodes_range, avg_state_values)
 
                 # Rescale all graph axes
-                for ax in [ax_reward, ax_loss, ax_entropy_metric, ax_td, ax_advantage, ax_density, ax_policy_entropy, ax_avg_value]:
+                for ax in [ax_reward, ax_loss, ax_entropy_metric, ax_density, ax_value_avg]:
                     ax.relim()
                     ax.autoscale_view()
 
                 fig.canvas.draw()
                 plt.pause(0.01)
-        # --- END OF MODIFIED SECTION ---
 
+        # Save weights periodically
         if (episode + 1) % 25 == 0:
             agent.model.save_weights(f'ca_agent_weights_{episode+1}.weights.h5')
             print(f"\nSaved weights at episode {episode+1}")
 
+    # Save final weights
     agent.model.save_weights('ca_agent_weights_final.weights.h5')
     print("\n--- Training Complete ---")
     
-    metrics_data = {'rewards': total_rewards, 'actor_losses': actor_losses, 'critic_losses': critic_losses, 'advantages': advantages, 'entropies': entropies, 'td_errors': td_errors, 'density_values': density_values, 'policy_entropies': policy_entropies, 'avg_state_values': avg_state_values}
+    # Save metrics (convert numpy types to Python types for JSON)
+    metrics_data = {
+        'episode_rewards': [float(x) for x in episode_rewards],
+        'policy_losses': [float(x) for x in policy_losses],
+        'value_losses': [float(x) for x in value_losses],
+        'entropies': [float(x) for x in entropies],
+        'density_values': [float(x) for x in density_values],
+        'avg_state_values': [float(x) for x in avg_state_values]
+    }
     with open('training_metrics.json', 'w') as f:
         json.dump(metrics_data, f)
     print("Training metrics saved to training_metrics.json")
@@ -664,50 +752,41 @@ def train_agent(args):
     if args.live_plot is not None:
         plt.ioff()
     
-    plt.figure(figsize=(15, 12))
-    plt.subplot(3, 3, 1)
-    plt.plot(total_rewards, linewidth=2)
-    plt.title('Total Reward per Episode', fontweight='bold')
+    # Create final summary plot
+    plt.figure(figsize=(15, 10))
+    
+    plt.subplot(3, 2, 1)
+    plt.plot(episode_rewards, linewidth=2)
+    plt.title('Episode Reward', fontweight='bold')
     plt.grid(True, alpha=0.3)
     
-    plt.subplot(3, 3, 2)
-    plt.plot(actor_losses, label='Actor Loss', linewidth=2)
-    plt.plot(critic_losses, label='Critic Loss', linewidth=2)
-    plt.title('Average Loss per Episode', fontweight='bold')
+    plt.subplot(3, 2, 2)
+    plt.plot(policy_losses, label='Policy Loss', linewidth=2)
+    plt.plot(value_losses, label='Value Loss', linewidth=2)
+    plt.title('Training Losses', fontweight='bold')
     plt.legend()
     plt.grid(True, alpha=0.3)
     
-    plt.subplot(3, 3, 3)
-    plt.plot(advantages, linewidth=2, color='purple')
-    plt.title('Average Advantage', fontweight='bold')
-    plt.grid(True, alpha=0.3)
-    
-    plt.subplot(3, 3, 4)
+    plt.subplot(3, 2, 3)
     plt.plot(entropies, linewidth=2, color='orange')
-    plt.title('Training Entropy (A2C)', fontweight='bold')
+    plt.title('Policy Entropy', fontweight='bold')
     plt.grid(True, alpha=0.3)
     
-    plt.subplot(3, 3, 5)
-    plt.plot(td_errors, linewidth=2, color='brown')
-    plt.title('TD Error', fontweight='bold')
+    plt.subplot(3, 2, 4)
+    plt.plot(density_values, linewidth=2, color='darkgreen')
+    plt.title('Average Grid Density', fontweight='bold')
     plt.grid(True, alpha=0.3)
     
-    plt.subplot(3, 3, 7)
-    plt.plot(policy_entropies, linewidth=2, color='crimson')
-    plt.title('Policy Entropy (H(π))', fontweight='bold')
-    plt.grid(True, alpha=0.3)
-
-    plt.subplot(3, 3, 8)
+    plt.subplot(3, 2, 5)
     plt.plot(avg_state_values, linewidth=2, color='dodgerblue')
-    plt.title('Average State Value (V(s))', fontweight='bold')
+    plt.title('Average State Value', fontweight='bold')
     plt.grid(True, alpha=0.3)
-    
-    plt.subplot(3, 3, 9).axis('off')
     
     plt.tight_layout()
-    plt.savefig('training_results_updated.png', dpi=150, bbox_inches='tight')
+    plt.savefig('ppo_training_results.png', dpi=150, bbox_inches='tight')
     plt.close('all')
-    print("Final plot saved to training_results_updated.png")
+    print("Final plot saved to ppo_training_results.png")
+
 
 def interactive_pattern_creator(args):
     """Interactive pattern creation tool."""
@@ -752,12 +831,11 @@ def interactive_pattern_creator(args):
     fig.canvas.mpl_connect('button_press_event', on_click)
     fig.canvas.mpl_connect('key_press_event', on_key)
     
-    # plt.show()
-    # plt.pause(0.001)
     plt.show(block=True)
 
+
 def run_demo_auto(args):
-    """Agent-controlled autonomous demo with agent-square, target, probs, value, and metrics."""
+    """Agent-controlled autonomous demo with visualization."""
     import matplotlib as mpl
     mpl.rcParams['keymap.fullscreen'] = []
 
@@ -767,18 +845,17 @@ def run_demo_auto(args):
     if args.pattern_file and os.path.exists(args.pattern_file):
         env.load_pattern(args.pattern_file)
 
-    # Require weights for autonomous demo
     if not getattr(args, 'weights', None) or not os.path.exists(args.weights):
-        raise FileNotFoundError(f"Autonomous demo requires a valid weights file. Provide --weights <file> (found: {getattr(args,'weights',None)})")
+        raise FileNotFoundError(f"Autonomous demo requires a valid weights file. Provide --weights <file>")
 
-    agent = ActorCriticAgent(
+    agent = PPOAgent(
         state_shape=(args.grid_size, args.grid_size, 2),
         num_actions=env.num_actions
     )
     agent.model.load_weights(args.weights)
     state = env.reset()
 
-    # Layout (similar to original): if pattern reward show target axis
+    # Setup visualization
     if env.reward_type == 'pattern' and env.target_pattern is not None:
         fig = plt.figure(figsize=(16, 6))
         gs = fig.add_gridspec(2, 4, hspace=0.3, wspace=0.3)
@@ -799,7 +876,6 @@ def run_demo_auto(args):
         ax_value = fig.add_subplot(gs[1, 1])
         ax_metrics = fig.add_subplot(gs[1, 2])
 
-    # Main grid + patches
     grid_img = ax_main.imshow(env.ca_grid, cmap='binary', vmin=0, vmax=1, interpolation='nearest')
     agent_patch = plt.Rectangle((env.agent_x - 1.5, env.agent_y - 1.5), 2, 2,
                                 facecolor='none', edgecolor='cyan', linewidth=2)
@@ -811,7 +887,6 @@ def run_demo_auto(args):
     ax_main.set_xticks([])
     ax_main.set_yticks([])
 
-    # Action probs bars
     action_labels = ['↑', '↓', '←', '→', '○'] + [f'{i:X}' for i in range(16)]
     action_probs, state_value = agent.get_action_probs_and_value(state)
     bars = ax_probs.bar(range(env.num_actions), action_probs, color='steelblue', alpha=0.8)
@@ -822,7 +897,6 @@ def run_demo_auto(args):
     ax_probs.set_title('Action Distribution')
     ax_probs.grid(axis='y', alpha=0.25)
 
-    # Value display
     value_text = ax_value.text(0.5, 0.5, f'V(s) = {state_value:.3f}',
                                ha='center', va='center', fontsize=18,
                                bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
@@ -831,30 +905,25 @@ def run_demo_auto(args):
     ax_value.set_title('State Value (Critic)')
     ax_value.axis('off')
 
-    # Metrics panel
     metrics_text = ax_metrics.text(0.05, 0.95, '', va='top', fontsize=10, family='monospace')
     ax_metrics.set_title('Metrics')
     ax_metrics.axis('off')
 
-    # running stats
     value_history = deque(maxlen=200)
     entropy_history = deque(maxlen=200)
 
     def update(frame):
         nonlocal state
         action = agent.select_action(state)
-        # get metrics for current state (before stepping)
         action_probs, state_value = agent.get_action_probs_and_value(state)
         clipped_probs = np.clip(action_probs, 1e-10, 1.0)
         entropy = -np.sum(clipped_probs * np.log(clipped_probs))
         value_history.append(state_value)
         entropy_history.append(entropy)
 
-        # step environment
         next_state, reward, _, _ = env.step(action)
         state = next_state
 
-        # update grid & patches
         grid_img.set_data(env.ca_grid)
         agent_patch.set_xy((env.agent_x - 1.5, env.agent_y - 1.5))
 
@@ -864,15 +933,12 @@ def run_demo_auto(args):
         else:
             target_patch.set_visible(False)
 
-        # update bars and highlight selected action
         for i, (bar, p) in enumerate(zip(bars, action_probs)):
             bar.set_height(p)
             bar.set_color('coral' if i == action else 'steelblue')
 
-        # update value text
         value_text.set_text(f'V(s) = {state_value:.3f}')
 
-        # update metrics block
         alive_count = int(np.sum(env.ca_grid))
         density = float(np.mean(env.ca_grid))
         avg_v = float(np.mean(value_history)) if value_history else 0.0
@@ -897,16 +963,15 @@ def run_demo_auto(args):
             title_text.set_text(f"Step: {frame} | Agent")
 
         metrics_text.set_text(metrics_str)
-
-        # return artists for FuncAnimation (makes update more robust)
         return [grid_img, agent_patch, target_patch] + list(bars)
 
     ani = animation.FuncAnimation(fig, update, frames=args.steps, interval=100, repeat=False, blit=False)
     print("\nAgent demo running (close window to stop).")
     plt.show(block=True)
 
+
 def run_demo_manual(args):
-    """Manual demo: shows agent/user square, target, probs, and metrics. r=record, p=save, q=quit."""
+    """Manual demo with optional recording."""
     import matplotlib as mpl
     mpl.rcParams['keymap.fullscreen'] = []
 
@@ -916,10 +981,9 @@ def run_demo_manual(args):
     if args.pattern_file and os.path.exists(args.pattern_file):
         env.load_pattern(args.pattern_file)
 
-    # Optional: show agent-based probabilities if user passed weights
     agent = None
     if getattr(args, 'weights', None) and os.path.exists(args.weights):
-        agent = ActorCriticAgent(
+        agent = PPOAgent(
             state_shape=(args.grid_size, args.grid_size, 2),
             num_actions=env.num_actions
         )
@@ -932,7 +996,6 @@ def run_demo_manual(args):
 
     state = env.reset()
 
-    # Layout: mimic demo layout so user sees the same panels
     if env.reward_type == 'pattern' and env.target_pattern is not None:
         fig = plt.figure(figsize=(16, 6))
         gs = fig.add_gridspec(2, 4, hspace=0.3, wspace=0.3)
@@ -981,7 +1044,6 @@ def run_demo_manual(args):
     ax_metrics.set_title('Metrics')
     ax_metrics.axis('off')
 
-    # Recording storage
     recording = False
     states_logged, actions_logged, rewards_logged, next_states_logged, ts_logged = [], [], [], [], []
     step_counter = 0
@@ -1001,13 +1063,11 @@ def run_demo_manual(args):
             return
         key = event.key.lower()
 
-        # Toggle recording
         if key == 'r':
             recording = not recording
             print(f"Recording {'started' if recording else 'stopped'}.")
             return
 
-        # Save recorded data while window open
         if key == 'p':
             if len(actions_logged) == 0:
                 print("No manual data to save.")
@@ -1022,21 +1082,17 @@ def run_demo_manual(args):
                 print(f"Saved manual dataset to {fname} ({len(actions_logged)} samples)")
             return
 
-        # Quit
         if key == 'q' or key == 'escape':
             plt.close()
             return
 
-        # Determine action from arrow / space / hex
         if key in key_map:
             action = key_map[key]
         elif key in hex_keys:
             action = 5 + hex_keys.index(key)
         else:
-            # unknown key -> ignore
             return
 
-        # log pre-action state if recording
         if recording:
             states_logged.append(np.squeeze(state, axis=0).copy())
 
@@ -1048,11 +1104,9 @@ def run_demo_manual(args):
             next_states_logged.append(np.squeeze(next_state, axis=0).copy())
             ts_logged.append(time.time())
 
-        # update state pointer
         state = next_state
         step_counter += 1
 
-        # update visuals
         grid_img.set_data(env.ca_grid)
         agent_patch.set_xy((env.agent_x - 1.5, env.agent_y - 1.5))
 
@@ -1062,8 +1116,6 @@ def run_demo_manual(args):
         else:
             target_patch.set_visible(False)
 
-        # If we have a loaded agent, show its probs for the *current* state,
-        # otherwise show uniform but highlight user action on the bars.
         if agent is not None:
             action_probs, state_value = agent.get_action_probs_and_value(state)
         else:
@@ -1074,7 +1126,6 @@ def run_demo_manual(args):
             bar.set_height(p)
             bar.set_color('coral' if i == action else 'steelblue')
 
-        # Build metrics string
         alive_count = int(np.sum(env.ca_grid))
         density = float(np.mean(env.ca_grid))
         metrics_str = (
@@ -1103,11 +1154,9 @@ def run_demo_manual(args):
     print("- Hex keys 0-f to write 2x2 patterns")
     print("- r to start/stop recording, p to save, q to quit\n")
 
-    # block until user closes window
     plt.show(block=True)
 
-    # After window closed, auto-save recorded data if any (if user didn't press p)
-    if len(actions_logged) > 0 and not os.path.exists(f'manual_data_{int(time.time())}.npz'):
+    if len(actions_logged) > 0:
         fname = f'manual_data_{int(time.time())}.npz'
         np.savez_compressed(fname,
                             states=np.array(states_logged),
@@ -1116,74 +1165,71 @@ def run_demo_manual(args):
                             next_states=np.array(next_states_logged),
                             timestamps=np.array(ts_logged))
         print(f"Manual demo finished. Saved {len(actions_logged)} samples to {fname}")
-    elif len(actions_logged) == 0:
-        print("Manual demo finished. No data recorded.")
 
 
 # --- Main Execution ---
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Enhanced RL in Cellular Automata Environment.")
-    subparsers = parser.add_subparsers(dest='mode', required=True, help='Select mode: train, demo, or create_pattern')
+    parser = argparse.ArgumentParser(description="Enhanced RL in Cellular Automata Environment with PPO.")
+    subparsers = parser.add_subparsers(dest='mode', required=True, help='Select mode')
 
     # --- Training Arguments ---
-    train_parser = subparsers.add_parser('train', help='Run the training loop.')
+    train_parser = subparsers.add_parser('train', help='Run PPO training.')
     train_parser.add_argument('--episodes', type=int, default=100, help='Number of training episodes.')
-    train_parser.add_argument('--steps', type=int, default=200, help='Number of steps per episode.')
-    train_parser.add_argument('--lr', type=float, default=0.00001, help='Learning rate.')
-    train_parser.add_argument('--entropy-coef', type=float, default=0.25, help='Entropy regularization coefficient.')
+    train_parser.add_argument('--rollout-steps', type=int, default=10, help='Steps per rollout/episode.')
+    train_parser.add_argument('--lr', type=float, default=0.0003, help='Learning rate.')
+    train_parser.add_argument('--gamma', type=float, default=0.99, help='Discount factor.')
+    train_parser.add_argument('--lam', type=float, default=0.95, help='GAE lambda.')
+    train_parser.add_argument('--clip-eps', type=float, default=0.2, help='PPO clip epsilon.')
+    train_parser.add_argument('--entropy-coef', type=float, default=0.01, help='Entropy coefficient.')
+    train_parser.add_argument('--vf-coef', type=float, default=0.5, help='Value function coefficient.')
+    train_parser.add_argument('--ppo-epochs', type=int, default=4, help='PPO update epochs per rollout.')
+    train_parser.add_argument('--batch-size', type=int, default=64, help='Minibatch size for PPO updates.')
     train_parser.add_argument('--grid-size', type=int, default=12, help='Size of the CA grid.')
-    train_parser.add_argument('--rules', type=str, default='conway', choices=['conway', 'seeds', 'maze'], help='CA rule set.')
-    train_parser.add_argument('--reward', type=str, default='entropy', choices=['entropy', 'maxwell_demon', 'target_practice', 'pattern'], help='Reward function.')
-    train_parser.add_argument('--pattern-file', type=str, default=None, help='Load custom pattern from file for training.')
-    # train_parser.add_argument('--live-plot', action='store_true', help='Enable live plotting during training.')
-    train_parser.add_argument('--live-plot', type=int, nargs='?', const=5, default=None, help=(
-            'Enable live plotting. Pass an integer for episode frequency '
-            '(e.g., 1=every episode, 5=every fifth). '
-            'Use 0 to visualize every step (like demo mode).'
-        )
-    )
-
-    train_parser.add_argument('--pretrained-weights', type=str, default=None, help='Optional path to pretrained weights to load before RL training (e.g. from supervised pretrain).')
+    train_parser.add_argument('--rules', type=str, default='conway', choices=['conway', 'seeds', 'maze'])
+    train_parser.add_argument('--reward', type=str, default='entropy', 
+                             choices=['entropy', 'maxwell_demon', 'target_practice', 'pattern'])
+    train_parser.add_argument('--pattern-file', type=str, default=None, help='Pattern file for training.')
+    train_parser.add_argument('--live-plot', type=int, nargs='?', const=5, default=None, 
+                             help='Live plotting frequency (0=every step, N=every N episodes).')
+    train_parser.add_argument('--pretrained-weights', type=str, default=None, help='Pretrained weights path.')
 
     # --- Supervised Learning Arguments ---
-    sup_parser = subparsers.add_parser('supervised', help='Run supervised pretraining on recorded manual data.')
-    sup_parser.add_argument('--data-file', type=str, required=True, help='Path to .npz file produced by manual recording (contains arrays states, actions).')
-    sup_parser.add_argument('--epochs', type=int, default=10, help='Supervised training epochs.')
-    sup_parser.add_argument('--batch-size', type=int, default=64, help='Batch size for supervised training.')
-    sup_parser.add_argument('--grid-size', type=int, default=12, help='CA grid size (must match dataset).')
+    sup_parser = subparsers.add_parser('supervised', help='Supervised pretraining.')
+    sup_parser.add_argument('--data-file', type=str, required=True, help='Path to .npz data file.')
+    sup_parser.add_argument('--epochs', type=int, default=10, help='Training epochs.')
+    sup_parser.add_argument('--batch-size', type=int, default=64, help='Batch size.')
+    sup_parser.add_argument('--grid-size', type=int, default=12)
     sup_parser.add_argument('--rules', type=str, default='conway', choices=['conway','seeds','maze'])
-    sup_parser.add_argument('--reward', type=str, default='entropy', choices=['entropy','maxwell_demon','target_practice','pattern'])
-    sup_parser.add_argument('--init-weights', type=str, default=None, help='Optional initial weights to load before supervised training.')
-    sup_parser.add_argument('--save-weights', type=str, default='supervised_weights_final.weights.h5', help='Filename to save trained weights.')
-    sup_parser.add_argument('--save-every', type=int, default=5, help='Save intermediate weights every N epochs.')
-    sup_parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate for supervised training.')
-    sup_parser.add_argument('--entropy-coef', type=float, default=0.0, help='Entropy regularization during supervised training.')
-    # supervised learning should also pre-train critic, not just actor, so we have critic hyperparameters too
-    sup_parser.add_argument('--gamma', type=float, default=0.99, help='Discount for critic target bootstrap.')
-    sup_parser.add_argument('--value-coef', type=float, default=0.5, help='Weight of value loss in supervised pretraining.')
+    sup_parser.add_argument('--reward', type=str, default='entropy')
+    sup_parser.add_argument('--init-weights', type=str, default=None)
+    sup_parser.add_argument('--save-weights', type=str, default='supervised_weights_final.weights.h5')
+    sup_parser.add_argument('--save-every', type=int, default=5)
+    sup_parser.add_argument('--lr', type=float, default=1e-4)
+    sup_parser.add_argument('--entropy-coef', type=float, default=0.0)
+    sup_parser.add_argument('--gamma', type=float, default=0.99)
+    sup_parser.add_argument('--value-coef', type=float, default=0.5)
 
     # --- Demo Arguments ---
-    demo_parser = subparsers.add_parser('demo', help='Run autonomous demo with trained agent.')
+    demo_parser = subparsers.add_parser('demo', help='Run autonomous demo.')
     demo_parser.add_argument('--weights', type=str, default='ca_agent_weights_final.weights.h5')
-    demo_parser.add_argument('--steps', type=int, default=500)
+    demo_parser.add_argument('--steps', type=int, default=10)
     demo_parser.add_argument('--grid-size', type=int, default=12)
     demo_parser.add_argument('--rules', type=str, default='conway', choices=['conway','seeds','maze'])
-    demo_parser.add_argument('--reward', type=str, default='entropy', choices=['entropy','maxwell_demon','target_practice','pattern'])
+    demo_parser.add_argument('--reward', type=str, default='entropy')
     demo_parser.add_argument('--pattern-file', type=str, default=None)
 
     # --- Manual Demo ---
-    manual_parser = subparsers.add_parser('manual', help='Manual play + optional recording.')
+    manual_parser = subparsers.add_parser('manual', help='Manual play with recording.')
     manual_parser.add_argument('--grid-size', type=int, default=12)
     manual_parser.add_argument('--rules', type=str, default='conway', choices=['conway','seeds','maze'])
-    manual_parser.add_argument('--reward', type=str, default='entropy', choices=['entropy','maxwell_demon','target_practice','pattern'])
+    manual_parser.add_argument('--reward', type=str, default='entropy')
     manual_parser.add_argument('--pattern-file', type=str, default=None)
-    manual_parser.add_argument('--steps', type=int, default=500)
-    manual_parser.add_argument('--weights', type=str, default=None, help='(optional) weights file to visualize agent policy while playing')
+    manual_parser.add_argument('--steps', type=int, default=10)
+    manual_parser.add_argument('--weights', type=str, default=None, help='Optional weights for policy display')
 
     # --- Pattern Creator Arguments ---
-    pattern_parser = subparsers.add_parser('create_pattern', help='Interactive pattern creation tool.')
-    pattern_parser.add_argument('--grid-size', type=int, default=12, help='Size of the pattern grid.')
-
+    pattern_parser = subparsers.add_parser('create_pattern', help='Interactive pattern creator.')
+    pattern_parser.add_argument('--grid-size', type=int, default=12)
 
     args = parser.parse_args()
 

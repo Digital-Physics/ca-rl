@@ -135,25 +135,25 @@ uv run rl_ca.py create_pattern
 'p' to save data immediately  
 (Output: manual_data_<timestamp>.npz)
 ```
-uv run rl_ca.py manual --reward pattern --pattern-file custom_pattern_12x12.npy --steps 500
+uv run rl_ca.py manual --reward pattern --pattern-file custom_pattern_12x12.npy
 ```
 #
 
 ### Supervised Learning Pre-training 
 #### Actor Policy Network & Critic Value Network are trained
 ```
-uv run rl_ca.py supervised --data-file manual_data_1759859590.npz --epochs 40 --batch-size 64 --gamma 0.99 --value-coef 0.5
+uv run rl_ca.py supervised --data-file manual_data_1760318876.npz --epochs 40 --batch-size 64 --gamma 0.99 --value-coef 0.5
 ```
 #
 
 ### Autonomous Demo (of Supervised Learning pre-trained model)
 ```
-uv run rl_ca.py demo --weights supervised_pretrained.weights.h5 --reward pattern --pattern-file custom_pattern_12x12.npy
+uv run rl_ca.py demo --weights supervised_weights_final.weights.h5 --reward pattern --pattern-file custom_pattern_12x12.npy
 ```
 #
 
 ### RL Training (from scratch) 
-show live plots every 5 episodes
+show live plot results every 5 episodes
 ```
 uv run rl_ca.py train --reward pattern --pattern-file custom_pattern_12x12.npy --live-plot 5
 ```
@@ -172,10 +172,14 @@ uv run rl_ca.py train --pretrained-weights supervised_weights_final.weights.h5 -
 
 ### Autonomous Demo (of RL agent)
 ```
-uv run rl_ca.py demo --weights supervised_weights_final.weights.h5 --reward pattern --pattern-file custom_pattern_12x12.npy
+uv run rl_ca.py demo --weights ca_agent_weights_50.weights.h5 --reward pattern --pattern-file custom_pattern_12x12.npy
 ```
 #
 
+# six steps to get pattern
+```
+uv run rl_ca.py train --episodes 30 --rollout-steps 6 --live-plot 0 --reward pattern --pattern-file my_pattern.npy --pattern-file custom_pattern_12x12.npy
+```
 
 ## Code Developed at Recurse Center
 The [Recurse Center](https://www.recurse.com/) asks participants to program at the edge of their ability...
