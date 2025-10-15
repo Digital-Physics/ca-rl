@@ -184,6 +184,37 @@ uv run rl_ca.py demo --weights ca_agent_weights_50.weights.h5 --reward pattern -
 uv run rl_ca.py train --episodes 30 --rollout-steps 6 --live-plot 0 --reward pattern --pattern-file my_pattern.npy --pattern-file custom_pattern_12x12.npy
 ```
 
+# Lstm (old, delete)
+```
+uv run rl_ca.py train --reward pattern --pattern-file custom_pattern_12x12_medium.npy --live-plot 25 --episodes 5000 --use-lstm
+```
+
+# ConvNet -> LSTM
+```
+uv run rl_ca.py train --reward pattern --pattern-file custom_pattern_12x12_medium.npy --live-plot 25 --episodes 5000 --lstm-units 256
+```
+
+
+To Do:
+-Tiny Recursive Models    
+https://arxiv.org/pdf/2510.04871
+-Neural Cellular Automata for ARC challenge
+https://www.youtube.com/watch?v=lwEDIUMEkuY
+- Evolutionary Algorithms (Symbolic Syntax Tree)  
+-- Function approximation  
+-- Rules of replacement are:
+--- Node that is a float can be adjusted (or something)
+--- Node that is a number can be replaced with a tree operator (or something)
+--- Operator that has one operand as another operator tree can be replace with a number instead (or something)
+
+
+
+
+
+
+
+
+
 ## Code Developed at Recurse Center
 The [Recurse Center](https://www.recurse.com/) asks participants to program at the edge of their ability...
 
