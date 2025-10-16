@@ -4,7 +4,7 @@ I originally started out exploring an Actor-Critic RL framework, but I have now 
 
 The goal of the overall project is to have some RL agent(s) (or evolutionary algorithm process) "learn" to play a game in a cellular automata (CA) environment. 
 
-In the end, this project is meant to engage users, be visual, and be part of a broader distributed machine learning project and website. [That website](https://www.nets-vs-automata.net) uses client-side computation with TensorFlow.js. JavaScript will be used in the final implementation of this project, but in the current phase, the exploratory phase, Pythonis being used.
+In the end, this project is meant to engage users, be visual, and be part of a broader distributed machine learning project and website. [That website](https://www.nets-vs-automata.net) uses client-side computation with TensorFlow.js. JavaScript will be used in the final implementation of this project, but in the current phase, the exploratory phase, Python is being used.
 
 Here's the web page currently under development. The last update reflects a point in time when Actor-Critic RL framework was being used:
 https://www.nets-vs-automata.net/rl.html
@@ -27,9 +27,21 @@ These games can be generated and filtered to interesting pictures (i.e. not blan
 # Command Line
 
 ### Create a target pattern through drawing it 
-### (An alternative: use the manual mode to save a game state as a target pattern)
 ```
 uv run evo_ca.py create_pattern --grid-size 12
+```
+
+### Controls:
+- **Arrow Keys**: Move agent up/down/left/right
+- **Space**: Do nothing action
+- **0-F keys**: Write 2x2 patterns (hex notation)
+- **S**: Save current grid state as a pattern file
+- **C**: Clear the grid
+- **Q**: Quit
+
+### Play in Manual Mode (and save a target pattern)
+```
+uv run evo_ca.py manual --grid-size 12 --pattern-file custom_pattern_12x12_sample.npy
 ```
 
 ### Train with evolutionary algorithm
@@ -46,29 +58,6 @@ uv run evo_ca.py train \
 ### Demo the best sequence found
 ```
 uv run evo_ca.py demo --sequence-file best_sequence.npy --pattern-file custom_pattern_12x12.npy
-```
-
-### Play in Manual Mode
-```
-uv run evo_ca.py manual --grid-size 12 --pattern-file custom_pattern_12x12_sample.npy
-```
-
-### Controls:
-- **Arrow Keys**: Move agent up/down/left/right
-- **Space**: Do nothing action
-- **0-F keys**: Write 2x2 patterns (hex notation)
-- **S**: Save current grid state as a pattern file
-- **C**: Clear the grid
-- **Q**: Quit
-
-### No live plotting (default)
-```
-uv run evo_ca.py train --pattern-file custom_pattern_12x12.npy
-```
-
-### Live plot every 10 generations (the default)
-```
-uv run evo_ca.py train --pattern-file custom_pattern_12x12.npy --live-plot
 ```
 
 ### Live plot every 50 generations
