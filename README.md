@@ -15,7 +15,7 @@ Goal:
 Starting from a blank Game Of Life cellular automata grid, take actions to generate the target pattern. Between each action (move left, right, up, down, do nothing, or write one of 16 2x2 pattern), the Game Of Life will update one step.  
 
 For instance:  
-The pattern in the picture below can be generated from the following actions: F (i.e. write a [[1, 1], [1, 1]] pattern), [Game of Life update step], Right, [GoL update], Up, [GoL update],  F, [GoL update], F, [GoL update], F, [GoL update], F, [GoL update], F, [GoL update] 
+The pattern in the picture below can be generated from the following actions: F (i.e. write a [[1, 1], [1, 1]] pattern), [Game of Life update step], Right, [GoL update], Up, [GoL update],  F, [GoL update], F, [GoL update], F, [GoL update], F, [GoL update], F, [GoL update]. You can also see another sequence of actions in the picture below that also leads to the same pattern after 10 steps, which would be a perfect result in the 10-step game.
 
 
 Game Dev Notes:  
