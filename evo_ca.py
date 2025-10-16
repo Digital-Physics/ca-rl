@@ -11,6 +11,7 @@ Author: Enhanced by Claude with Evolutionary Algorithm
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+from matplotlib.widgets import Button
 from scipy.signal import convolve2d
 from tqdm import tqdm
 import argparse
@@ -265,7 +266,7 @@ def train_evolutionary(args):
     )
     
     # Setup live plotting
-    if args.live_plot:
+    if args.live_plot is not None:
         fig = plt.figure(figsize=(18, 10))
         gs = fig.add_gridspec(3, 4, hspace=0.4, wspace=0.35)
         
@@ -355,7 +356,7 @@ def train_evolutionary(args):
         optimizer.evaluate_population()
         
         # Update visualization
-        if args.live_plot and (generation % args.plot_freq == 0 or generation == args.generations - 1):
+        if args.live_plot is not None and (generation % args.live_plot == 0 or generation == args.generations - 1):
             # Evaluate best sequence for display
             best_fitness, best_grid = optimizer.evaluate_sequence(optimizer.best_sequence)
             
@@ -507,7 +508,7 @@ def train_evolutionary(args):
     # Save best sequence
     np.save('best_sequence.npy', optimizer.best_sequence)
     
-    if args.live_plot:
+    if args.live_plot is not None:
         plt.ioff()
         plt.savefig('evolutionary_results.png', dpi=150, bbox_inches='tight')
     
@@ -674,6 +675,183 @@ def interactive_pattern_creator(args):
     plt.show(block=True)
 
 
+def run_demo_manual(args):
+    """Manual play mode with keyboard control and pattern saving."""
+    import matplotlib as mpl
+    mpl.rcParams['keymap.fullscreen'] = []
+
+    print("--- Running Manual Play Mode ---")
+    env = CAEnv(grid_size=args.grid_size, rules_name=args.rules, 
+                reward_type='pattern', max_steps=args.steps)
+
+    if args.pattern_file and os.path.exists(args.pattern_file):
+        env.load_pattern(args.pattern_file)
+
+    state = env.reset()
+
+    # Setup visualization
+    if env.target_pattern is not None:
+        fig = plt.figure(figsize=(16, 6))
+        gs = fig.add_gridspec(2, 4, hspace=0.3, wspace=0.3)
+        ax_main = fig.add_subplot(gs[:, 0])
+        ax_target = fig.add_subplot(gs[:, 1])
+        ax_actions = fig.add_subplot(gs[0, 2:])
+        ax_metrics = fig.add_subplot(gs[1, 2:])
+        ax_target.imshow(env.target_pattern, cmap='binary', vmin=0, vmax=1, interpolation='nearest')
+        ax_target.set_title('Target Pattern', fontweight='bold')
+        ax_target.set_xticks([])
+        ax_target.set_yticks([])
+    else:
+        fig = plt.figure(figsize=(16, 6))
+        gs = fig.add_gridspec(2, 3, hspace=0.3, wspace=0.3)
+        ax_main = fig.add_subplot(gs[:, 0])
+        ax_actions = fig.add_subplot(gs[0, 1:])
+        ax_metrics = fig.add_subplot(gs[1, 1:])
+
+    grid_img = ax_main.imshow(env.ca_grid, cmap='binary', vmin=0, vmax=1, interpolation='nearest')
+    agent_patch = plt.Rectangle((env.agent_x - 1.5, env.agent_y - 1.5), 2, 2,
+                                facecolor='none', edgecolor='cyan', linewidth=2)
+    ax_main.add_patch(agent_patch)
+    title_text = ax_main.set_title("Step: 0 | Manual Mode", fontweight='bold')
+    ax_main.set_xticks([])
+    ax_main.set_yticks([])
+
+    action_labels = ['↑', '↓', '←', '→', '○'] + [f'{i:X}' for i in range(16)]
+    action_history = deque(maxlen=args.steps)
+    
+    bars = ax_actions.bar(range(len(action_labels)), np.zeros(len(action_labels)), 
+                          color='steelblue', alpha=0.7)
+    ax_actions.set_ylim([0, 1])
+    ax_actions.set_xticks(range(len(action_labels)))
+    ax_actions.set_xticklabels(action_labels, fontsize=8)
+    ax_actions.set_ylabel('Usage')
+    ax_actions.set_title('Action History', fontweight='bold')
+    ax_actions.grid(axis='y', alpha=0.3)
+
+    metrics_text = ax_metrics.text(0.05, 0.95, '', va='top', fontsize=11, family='monospace')
+    ax_metrics.set_title('Statistics', fontweight='bold')
+    ax_metrics.axis('off')
+
+    step_counter = [0]
+    key_map = {
+        'up': 0,
+        'down': 1,
+        'left': 2,
+        'right': 3,
+        ' ': 4,
+    }
+    hex_keys = list('0123456789abcdef')
+
+    def on_key(event):
+        if event.key is None:
+            return
+        key = event.key.lower()
+
+        if key == 'q' or key == 'escape':
+            plt.close()
+            return
+
+        if key == 's':
+            filename = f'custom_pattern_{args.grid_size}x{args.grid_size}.npy'
+            env.save_pattern(filename)
+            print(f"Current grid state saved to {filename}")
+            print(f"Density: {np.mean(env.ca_grid):.3f}, Live cells: {np.sum(env.ca_grid)}")
+            return
+
+        if key == 'c':
+            env.reset()
+            step_counter[0] = 0
+            action_history.clear()
+            grid_img.set_data(env.ca_grid)
+            agent_patch.set_xy((env.agent_x - 1.5, env.agent_y - 1.5))
+            title_text.set_text("Step: 0 | Manual Mode")
+            
+            # Reset bars
+            for bar in bars:
+                bar.set_height(0)
+            
+            metrics_text.set_text("Grid cleared. Ready for new sequence.")
+            fig.canvas.draw_idle()
+            return
+
+        if key in key_map:
+            action = key_map[key]
+        elif key in hex_keys:
+            action = 5 + hex_keys.index(key)
+        else:
+            return
+
+        # Execute action
+        next_state, done = env.step(action)
+        action_history.append(action)
+        step_counter[0] += 1
+
+        # Update visualization
+        grid_img.set_data(env.ca_grid)
+        agent_patch.set_xy((env.agent_x - 1.5, env.agent_y - 1.5))
+
+        # Update action history bars
+        action_counts = np.bincount(list(action_history), minlength=len(action_labels))
+        max_count = max(action_counts) if max(action_counts) > 0 else 1
+        normalized_counts = action_counts / max_count
+        
+        for bar, count in zip(bars, normalized_counts):
+            bar.set_height(count)
+
+        # Calculate metrics
+        alive_count = int(np.sum(env.ca_grid))
+        density = float(np.mean(env.ca_grid))
+        
+        metrics_str = (
+            f"Step: {step_counter[0]}\n"
+            f"Action: {env.actions[action]}\n"
+            f"Alive cells: {alive_count}\n"
+            f"Density: {density:.3f}\n\n"
+            f"Controls:\n"
+            f"Arrow Keys/Space: Move/Wait\n"
+            f"0-F: Write patterns\n"
+            f"S: Save current grid\n"
+            f"C: Clear grid\n"
+            f"Q: Quit"
+        )
+
+        if env.target_pattern is not None:
+            fitness = env.calculate_fitness(env.ca_grid)
+            match_pct = np.mean(env.ca_grid == env.target_pattern)
+            metrics_str = (
+                f"Step: {step_counter[0]}\n"
+                f"Action: {env.actions[action]}\n"
+                f"Alive cells: {alive_count}\n"
+                f"Density: {density:.3f}\n"
+                f"Fitness: {fitness:.2f}\n"
+                f"Match: {match_pct:.1%}\n\n"
+                f"Controls:\n"
+                f"Arrow Keys/Space: Move/Wait\n"
+                f"0-F: Write patterns\n"
+                f"S: Save grid as pattern\n"
+                f"C: Clear grid\n"
+                f"Q: Quit"
+            )
+            title_text.set_text(f"Step: {step_counter[0]} | Fitness: {fitness:.2f} | Match: {match_pct:.1%}")
+        else:
+            title_text.set_text(f"Step: {step_counter[0]} | Manual Mode")
+
+        metrics_text.set_text(metrics_str)
+        fig.canvas.draw_idle()
+
+    fig.canvas.mpl_connect('key_press_event', on_key)
+
+    print("\nManual Play Mode Controls:")
+    print("- Arrow Keys: Move agent (↑/↓/←/→)")
+    print("- Space: Do nothing")
+    print("- 0-F: Write 2x2 patterns (hex notation)")
+    print("- S: Save current grid state as pattern file")
+    print("- C: Clear grid")
+    print("- Q: Quit\n")
+
+    plt.show(block=True)
+
+
 # --- Main Execution ---
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Evolutionary Algorithm for CA Pattern Matching")
@@ -689,8 +867,8 @@ if __name__ == '__main__':
     train_parser.add_argument('--grid-size', type=int, default=12, help='Size of CA grid')
     train_parser.add_argument('--rules', type=str, default='conway', choices=['conway', 'seeds', 'maze'])
     train_parser.add_argument('--pattern-file', type=str, required=True, help='Target pattern file')
-    train_parser.add_argument('--live-plot', action='store_true', help='Enable live plotting')
-    train_parser.add_argument('--plot-freq', type=int, default=10, help='Plot update frequency')
+    train_parser.add_argument('--live-plot', type=int, nargs='?', const=10, default=None, 
+                             help='Live plotting frequency (None=off, 0=every gen, N=every N gens)')
     train_parser.add_argument('--save-freq', type=int, default=100, help='Checkpoint save frequency')
 
     # Demo
@@ -699,6 +877,13 @@ if __name__ == '__main__':
     demo_parser.add_argument('--pattern-file', type=str, help='Target pattern file')
     demo_parser.add_argument('--grid-size', type=int, default=12)
     demo_parser.add_argument('--rules', type=str, default='conway', choices=['conway', 'seeds', 'maze'])
+
+    # Manual Play
+    manual_parser = subparsers.add_parser('manual', help='Manual play mode with keyboard control')
+    manual_parser.add_argument('--grid-size', type=int, default=12)
+    manual_parser.add_argument('--rules', type=str, default='conway', choices=['conway', 'seeds', 'maze'])
+    manual_parser.add_argument('--pattern-file', type=str, default=None, help='Target pattern file (optional)')
+    manual_parser.add_argument('--steps', type=int, default=100, help='Maximum steps')
 
     # Pattern Creator
     pattern_parser = subparsers.add_parser('create_pattern', help='Interactive pattern creator')
@@ -710,5 +895,7 @@ if __name__ == '__main__':
         train_evolutionary(args)
     elif args.mode == 'demo':
         run_demo(args)
+    elif args.mode == 'manual':
+        run_demo_manual(args)
     elif args.mode == 'create_pattern':
         interactive_pattern_creator(args)
