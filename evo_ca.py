@@ -4,8 +4,6 @@ evo_ca.py
 
 Evolutionary Algorithm for Cellular Automata Pattern Matching
 Uses genetic algorithms to evolve sequences of actions that create target patterns.
-
-Author: Enhanced by Claude with Evolutionary Algorithm
 """
 
 import numpy as np
@@ -168,6 +166,8 @@ class EvolutionaryOptimizer:
         self.avg_fitness_history = []
         self.max_fitness_history = []
         self.diversity_history = []
+        self.unique_sequences_seen = set()
+
 
     def _random_sequence(self):
         """Generate a random action sequence."""
@@ -232,6 +232,9 @@ class EvolutionaryOptimizer:
         """Evaluate all sequences in the population."""
         for i in range(self.population_size):
             self.fitness_scores[i], _ = self.evaluate_sequence(self.population[i])
+
+            # Track global uniqueness
+            self.unique_sequences_seen.add(tuple(self.population[i].tolist()))
 
             if self.fitness_scores[i] > self.best_fitness:
                 self.best_fitness = self.fitness_scores[i]
@@ -380,9 +383,15 @@ def create_action_images(num_actions, size=20):
 
     return action_images
 
+def format_seq(seq, action_labels, max_len=15):
+    """Return abbreviated sequence string if too long."""
+    if len(seq) <= max_len:
+        return ' '.join([action_labels[a] for a in seq])
+    half = max_len // 2
+    return ' '.join([action_labels[a] for a in seq[:half]]) + " … " + ' '.join([action_labels[a] for a in seq[-half:]])
 
 def train_evolutionary(args):
-    """Main evolutionary training loop."""
+    """Main evolutionary training loop with enhanced 4-row visualization."""
     print("--- Starting Evolutionary Training ---")
 
     env = CAEnv(grid_size=args.grid_size, rules_name=args.rules,
@@ -402,159 +411,166 @@ def train_evolutionary(args):
         mutation_rate=args.mutation_rate
     )
 
+    # Track all unique sequences seen globally
+    optimizer.unique_sequences_seen = set()
+
     # Setup live plotting
     if args.live_plot is not None:
         action_images = create_action_images(optimizer.num_actions, size=20)
 
-        fig = plt.figure(figsize=(20, 12))
-        gs = fig.add_gridspec(3, 5, hspace=0.5, wspace=0.4)
+        # fig = plt.figure(figsize=(22, 13))
+        # # gs = fig.add_gridspec(4, 6, height_ratios=[1, 1, 0.8, 0.6],
+        # #                       hspace=0.6, wspace=0.45)
 
-        # Grid displays
+        # # gs = fig.add_gridspec(4, 6, height_ratios=[1, 1, 0.8, 0.65], hspace=1.65, wspace=0.45)
+
+        # gs = fig.add_gridspec(
+        #     4, 6,
+        #     height_ratios=[1, 1, 0.9, 0.8],  # give 4th row plenty of height
+        #     hspace=0.8,  # extra vertical space to avoid overlap
+        #     wspace=0.45
+        # )
+
+        fig = plt.figure(figsize=(22, 14))  # slightly taller figure
+        gs = fig.add_gridspec(
+            4, 6,
+            height_ratios=[1, 1, 0.9, 1.1],  # 4th row taller than others
+            hspace=1.1,                      # more vertical padding between rows
+            wspace=0.5
+        )
+        plt.subplots_adjust(top=0.92, bottom=0.05)  # adds padding from window edges
+
+        # Row 1
         ax_best = fig.add_subplot(gs[0, 0])
         ax_target = fig.add_subplot(gs[0, 1])
         ax_current = fig.add_subplot(gs[0, 2])
-
-        # Metrics
         ax_fitness = fig.add_subplot(gs[0, 3:])
+
+        # Row 2
         ax_diversity = fig.add_subplot(gs[1, 0])
         ax_actions = fig.add_subplot(gs[1, 1])
         ax_dist = fig.add_subplot(gs[1, 2])
         ax_fitness_dist = fig.add_subplot(gs[1, 3:])
-        # ax_leaderboard = fig.add_subplot(gs[2, 0:2])
-        ax_leaderboard_gen = fig.add_subplot(gs[2, 0])
-        ax_leaderboard_all = fig.add_subplot(gs[2, 1])
-        ax_info = fig.add_subplot(gs[2, 2:4])
 
-        ax_seq_imgs = fig.add_subplot(gs[2, 4])
+        # Row 3 (Leaderboards + Stats)
+        ax_leaderboard_gen = fig.add_subplot(gs[2, 0:2])
+        ax_leaderboard_all = fig.add_subplot(gs[2, 2:4])
+        ax_info = fig.add_subplot(gs[2, 4:6])
+
+        # Row 4 (Full-width best sequence)
+        ax_seq_imgs = fig.add_subplot(gs[3, :])
 
         fig.suptitle('Evolutionary Algorithm Progress', fontsize=16, fontweight='bold')
 
-        # Initialize displays
+        # --- First Row Displays ---
         best_img = ax_best.imshow(np.zeros((env.grid_size, env.grid_size)),
                                   cmap='binary', vmin=0, vmax=1, interpolation='nearest')
         ax_best.set_title('Best Solution', fontweight='bold')
-        ax_best.set_xticks([])
-        ax_best.set_yticks([])
+        ax_best.set_xticks([]); ax_best.set_yticks([])
 
         target_img = ax_target.imshow(env.target_pattern if env.target_pattern is not None else np.zeros((env.grid_size, env.grid_size)),
                                       cmap='binary', vmin=0, vmax=1, interpolation='nearest')
         ax_target.set_title('Target Pattern', fontweight='bold')
-        ax_target.set_xticks([])
-        ax_target.set_yticks([])
+        ax_target.set_xticks([]); ax_target.set_yticks([])
 
         current_img = ax_current.imshow(np.zeros((env.grid_size, env.grid_size)),
-                                       cmap='binary', vmin=0, vmax=1, interpolation='nearest')
+                                        cmap='binary', vmin=0, vmax=1, interpolation='nearest')
         ax_current.set_title(f"Generation Sample (Step {args.steps})", fontweight='bold')
-        ax_current.set_xticks([])
-        ax_current.set_yticks([])
+        ax_current.set_xticks([]); ax_current.set_yticks([])
 
-        # Fitness plot
         line_max = ax_fitness.plot([], [], 'b-', linewidth=2, label='Max')[0]
         line_avg = ax_fitness.plot([], [], 'g-', linewidth=2, label='Avg')[0]
         ax_fitness.set_title('Fitness Progress', fontweight='bold')
-        ax_fitness.set_xlabel('Generation')
-        ax_fitness.set_ylabel('Fitness')
-        ax_fitness.legend()
-        ax_fitness.grid(True, alpha=0.3)
+        ax_fitness.set_xlabel('Generation'); ax_fitness.set_ylabel('Fitness')
+        ax_fitness.legend(); ax_fitness.grid(True, alpha=0.3)
 
-        # Diversity plot
+        # --- Second Row Displays ---
         line_div = ax_diversity.plot([], [], 'orange', linewidth=2)[0]
         ax_diversity.set_title('Population Diversity', fontweight='bold')
-        ax_diversity.set_xlabel('Generation')
-        ax_diversity.set_ylabel('Unique Sequences %')
-        ax_diversity.set_ylim([0, 1])
-        ax_diversity.grid(True, alpha=0.3)
+        ax_diversity.set_xlabel('Generation'); ax_diversity.set_ylabel('Unique Sequences %')
+        ax_diversity.set_ylim([0, 1]); ax_diversity.grid(True, alpha=0.3)
 
-        # Action sequence labels and colors
         action_labels = ['↑', '↓', '←', '→', '∅'] + [f'{i:X}' for i in range(16)]
         action_colors = plt.cm.tab20(np.linspace(0, 1, len(action_labels)))
 
-        # Fitness distribution
         ax_fitness_dist.set_title('Fitness Distribution', fontweight='bold')
-        ax_fitness_dist.set_xlabel('Fitness')
-        ax_fitness_dist.set_ylabel('Count')
+        ax_fitness_dist.set_xlabel('Fitness'); ax_fitness_dist.set_ylabel('Count')
 
-        # Action distribution
         ax_dist.set_title('Action Usage', fontweight='bold')
         ax_dist.set_ylabel('Frequency')
-        
-        # Leaderboard
-        # leaderboard_text = ax_leaderboard.text(0.05, 0.95, '', va='top', fontsize=10, family='monospace',
-        #                                        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
-        # ax_leaderboard.set_title('Top 5 Sequences', fontweight='bold')
-        # ax_leaderboard.axis('off')
-        leaderboard_text_gen = ax_leaderboard_gen.text(0.05, 0.95, '', va='top', fontsize=10, family='monospace',
-                                                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
+
+        # --- Third Row Leaderboards + Stats ---
+        def format_seq(seq, labels, max_len=15):
+            if len(seq) <= max_len:
+                return ' '.join([labels[a] for a in seq])
+            half = max_len // 2
+            return ' '.join([labels[a] for a in seq[:half]]) + " … " + ' '.join([labels[a] for a in seq[-half:]])
+
+        leaderboard_text_gen = ax_leaderboard_gen.text(
+            0.02, 0.98, '', va='top', fontsize=10, family='monospace',
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
         ax_leaderboard_gen.set_title('Top 5 (This Generation)', fontweight='bold')
         ax_leaderboard_gen.axis('off')
 
-        leaderboard_text_all = ax_leaderboard_all.text(0.05, 0.95, '', va='top', fontsize=10, family='monospace',
-                                                    bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.3))
+        leaderboard_text_all = ax_leaderboard_all.text(
+            0.02, 0.98, '', va='top', fontsize=10, family='monospace',
+            bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.3))
         ax_leaderboard_all.set_title('Top 5 (All-Time Unique)', fontweight='bold')
         ax_leaderboard_all.axis('off')
 
-        
-        # New Action sequence visualization
-        ax_seq_imgs.set_title('Best Sequence', fontweight='bold')
-        ax_seq_imgs.axis('off')
-
-        # Info text
-        info_text = ax_info.text(0.05, 0.95, '', va='top', fontsize=10, family='monospace')
+        info_text = ax_info.text(0.02, 0.98, '', va='top', fontsize=10, family='monospace')
         ax_info.set_title('Statistics', fontweight='bold')
         ax_info.axis('off')
 
+        # --- Fourth Row (Best Sequence Visualization) ---
+        ax_seq_imgs.set_title('Best Sequence (Full Visualization)', fontweight='bold', pad=10)
+        ax_seq_imgs.axis('off')
+
         plt.pause(0.1)
 
-    # Training loop
+    # --- Training Loop ---
     print(f"\nTraining for {args.generations} generations...")
     print(f"Population size: {args.population_size}, Sequence length: {args.steps}")
     print(f"Elite fraction: {args.elite_fraction}, Mutation rate: {args.mutation_rate}\n")
 
     for generation in tqdm(range(args.generations), desc="Evolution"):
-        # Evaluate population
         optimizer.evaluate_population()
 
-        # Update visualization
-        if args.live_plot is not None and (generation % args.live_plot == 0 or generation == args.generations - 1):
-            # Evaluate best sequence for display
-            best_fitness, best_grid = optimizer.evaluate_sequence(optimizer.best_sequence)
+        # Track unique sequences globally
+        for seq in optimizer.population:
+            optimizer.unique_sequences_seen.add(tuple(seq.tolist()))
 
-            # Update grid displays
+        if args.live_plot is not None and (generation % args.live_plot == 0 or generation == args.generations - 1):
+            best_fitness, best_grid = optimizer.evaluate_sequence(optimizer.best_sequence)
             best_img.set_data(best_grid)
 
-            # Evaluate a random current member
             random_idx = np.random.randint(0, optimizer.population_size)
             _, current_grid = optimizer.evaluate_sequence(optimizer.population[random_idx])
             current_img.set_data(current_grid)
 
-            # Update fitness plot
             gens = range(len(optimizer.max_fitness_history))
             line_max.set_data(gens, optimizer.max_fitness_history)
             line_avg.set_data(gens, optimizer.avg_fitness_history)
-            ax_fitness.relim()
-            ax_fitness.autoscale_view()
+            ax_fitness.relim(); ax_fitness.autoscale_view()
 
-            # Update diversity plot
             line_div.set_data(gens, optimizer.diversity_history)
-            ax_diversity.relim()
-            ax_diversity.autoscale_view(scalex=True, scaley=False) # Keep Y fixed
+            ax_diversity.relim(); ax_diversity.autoscale_view(scalex=True, scaley=False)
 
-            # Action sequence bar chart
             ax_actions.clear()
             colors = [action_colors[a] for a in optimizer.best_sequence]
             ax_actions.bar(range(args.steps), optimizer.best_sequence, color=colors)
             ax_actions.set_title('Best Action Sequence', fontweight='bold')
-            ax_actions.set_xlabel('Step')
-            ax_actions.set_ylabel('Action ID')
-            ax_actions.set_ylim([-1, optimizer.num_actions])
-            ax_actions.grid(axis='y', alpha=0.3)
+            ax_actions.set_xlabel('Step'); ax_actions.set_ylabel('Action ID')
+            ax_actions.set_ylim([-1, optimizer.num_actions]); ax_actions.grid(axis='y', alpha=0.3)
 
-            # New: Action sequence image visualization
+            # --- Best Sequence Visualization (Row 4) ---
             ax_seq_imgs.clear()
-            ax_seq_imgs.set_title('Best Sequence', fontweight='bold')
+            ax_seq_imgs.set_title('Best Sequence (Full Visualization)', fontweight='bold', pad=10)
             ax_seq_imgs.axis('off')
+
             best_seq = optimizer.best_sequence
             if best_seq is not None and len(best_seq) > 0:
+                # Build the composite image (grid of small action icons)
                 seq_img_list = [action_images[action] for action in best_seq]
                 padding = np.zeros_like(seq_img_list[0][:, :2])
                 padded_imgs = []
@@ -562,88 +578,78 @@ def train_evolutionary(args):
                     padded_imgs.append(img)
                     padded_imgs.append(padding)
                 composite_img = np.hstack(padded_imgs[:-1])
-                ax_seq_imgs.imshow(composite_img, cmap='binary', interpolation='nearest')
-            else:
-                ax_seq_imgs.text(0.5, 0.5, 'No sequence', ha='center', va='center')
 
-            # Fitness distribution
+                # Keep natural aspect ratio — no stretching or scaling
+                ax_seq_imgs.imshow(
+                    composite_img,
+                    cmap='binary',
+                    interpolation='nearest',
+                    aspect='equal'  # preserves square pixels
+                )
+
+                ax_seq_imgs.set_anchor('C')  # centers content in subplot
+                ax_seq_imgs.set_position(ax_seq_imgs.get_position())  # lock its allocated space
+
+                # Add small padding around edges for visual breathing room
+                ax_seq_imgs.set_xlim([-2, composite_img.shape[1] + 2])
+                ax_seq_imgs.set_ylim([composite_img.shape[0] + 2, -2])
+            else:
+                ax_seq_imgs.text(0.5, 0.5, 'No sequence', ha='center', va='center', fontsize=12)
+
+            # --- Fitness Distribution ---
             ax_fitness_dist.clear()
             ax_fitness_dist.hist(optimizer.fitness_scores, bins=20, color='steelblue', alpha=0.7)
-            ax_fitness_dist.set_title('Fitness Distribution', fontweight='bold')
-            ax_fitness_dist.set_xlabel('Fitness')
-            ax_fitness_dist.set_ylabel('Count')
             ax_fitness_dist.axvline(optimizer.best_fitness, color='red', linestyle='--', linewidth=2, label='Best')
+            ax_fitness_dist.set_title('Fitness Distribution', fontweight='bold')
             ax_fitness_dist.legend()
 
-            # Action usage distribution
+            # --- Action Usage ---
             ax_dist.clear()
             all_actions = np.concatenate(optimizer.population)
             action_counts = np.bincount(all_actions, minlength=optimizer.num_actions)
             bars = ax_dist.bar(range(optimizer.num_actions), action_counts, color='steelblue', alpha=0.7)
+            best_action_counts = np.bincount(optimizer.best_sequence, minlength=optimizer.num_actions)
+            for i, bar in enumerate(bars):
+                if best_action_counts[i] > 0:
+                    bar.set_color('coral')
             ax_dist.set_title('Action Usage', fontweight='bold')
             ax_dist.set_ylabel('Frequency')
             ax_dist.set_xticks(range(optimizer.num_actions))
             ax_dist.set_xticklabels(action_labels, fontsize=7, rotation=45)
 
-            # Highlight best sequence actions
-            best_action_counts = np.bincount(optimizer.best_sequence, minlength=optimizer.num_actions)
-            for i, bar in enumerate(bars):
-                if best_action_counts[i] > 0:
-                    bar.set_color('coral')
-
-            # Update leaderboard
-            # top_sequences = optimizer.get_top_sequences(k=5)
-            # leaderboard_str = "LEADERBOARD (Top 5):\n" + "=" * 40 + "\n"
-            # for rank, (seq, fitness) in enumerate(top_sequences, 1):
-            #     seq_str = ' '.join([action_labels[a] for a in seq])
-            #     leaderboard_str += f"#{rank}: Fitness {fitness:.2f}\n"
-            #     leaderboard_str += f"    {seq_str}\n"
-            # leaderboard_text.set_text(leaderboard_str)
-
-            # --- Update generation leaderboard ---
+            # --- Leaderboards ---
             top_sequences = optimizer.get_top_sequences(k=5)
             leaderboard_str_gen = "LEADERBOARD (Gen):\n" + "=" * 30 + "\n"
             for rank, (seq, fitness) in enumerate(top_sequences, 1):
-                seq_str = ' '.join([action_labels[a] for a in seq])
+                seq_str = format_seq(seq, action_labels)
                 leaderboard_str_gen += f"#{rank}: {fitness:.2f}\n    {seq_str}\n"
             leaderboard_text_gen.set_text(leaderboard_str_gen)
 
-            # --- Update overall leaderboard ---
-            # leaderboard_str_all = "LEADERBOARD (All):\n" + "=" * 30 + "\n"
-            # for rank, (seq, fitness) in enumerate(optimizer.overall_best, 1):
-            #     seq_str = ' '.join([action_labels[a] for a in seq])
-            #     leaderboard_str_all += f"#{rank}: {fitness:.2f}\n    {seq_str}\n"
-            # leaderboard_text_all.set_text(leaderboard_str_all)
-            
-            # --- Update overall leaderboard ---
             leaderboard_str_all = "LEADERBOARD (All-Time):\n" + "=" * 30 + "\n"
             for rank, (seq, fitness, gen_idx) in enumerate(optimizer.overall_best, 1):
-                seq_str = ' '.join([action_labels[a] for a in seq])
+                seq_str = format_seq(seq, action_labels)
                 leaderboard_str_all += f"#{rank}: {fitness:.2f} (Gen {gen_idx})\n    {seq_str}\n"
             leaderboard_text_all.set_text(leaderboard_str_all)
 
-            # Update info text
+            # --- Stats Panel ---
             info_str = (
                 f"Generation: {generation + 1}/{args.generations}\n"
                 f"Best Fitness: {optimizer.best_fitness:.2f}\n"
                 f"Avg Fitness: {optimizer.avg_fitness_history[-1]:.2f}\n"
                 f"Diversity: {optimizer.diversity_history[-1]:.2%}\n"
                 f"Perfect Matches: {np.sum(optimizer.fitness_scores >= 200)}\n"
+                f"Unique Sequences Found: {len(optimizer.unique_sequences_seen)}\n"
             )
-
-            if generation == args.generations - 1:
-                info_str += f"\nFinal Score: {optimizer.best_fitness:.2f}\n"
-
             info_text.set_text(info_str)
 
             fig.canvas.draw()
             plt.pause(0.01)
 
-        # Evolve population
+        # Evolve
         if generation < args.generations - 1:
             optimizer.evolve()
 
-        # Save checkpoint
+        # Save checkpoint periodically
         if (generation + 1) % args.save_freq == 0:
             checkpoint = {
                 'generation': generation + 1,
@@ -656,12 +662,12 @@ def train_evolutionary(args):
             with open(f'checkpoint_gen{generation+1}.json', 'w') as f:
                 json.dump(checkpoint, f, indent=2)
 
-    # Save final results
+    # --- Save final results ---
     print(f"\n--- Training Complete ---")
     print(f"Best Fitness: {optimizer.best_fitness:.2f}")
     print(f"Best Sequence: {optimizer.best_sequence}")
 
-    final_results = {
+    results = {
         'best_sequence': optimizer.best_sequence.tolist(),
         'best_fitness': float(optimizer.best_fitness),
         'max_fitness_history': optimizer.max_fitness_history,
@@ -671,9 +677,7 @@ def train_evolutionary(args):
     }
 
     with open('evolutionary_results.json', 'w') as f:
-        json.dump(final_results, f, indent=2)
-
-    # Save best sequence
+        json.dump(results, f, indent=2)
     np.save('best_sequence.npy', optimizer.best_sequence)
 
     if args.live_plot is not None:
@@ -873,7 +877,7 @@ def interactive_pattern_creator(args):
     plt.show(block=True)
 
 
-def run_demo_manual(args):
+def run_manual(args):
     """Manual play mode with keyboard control and pattern saving."""
     import matplotlib as mpl
     mpl.rcParams['keymap.fullscreen'] = []
@@ -1110,6 +1114,6 @@ if __name__ == '__main__':
     elif args.mode == 'demo':
         run_demo(args)
     elif args.mode == 'manual':
-        run_demo_manual(args)
+        run_manual(args)
     elif args.mode == 'create_pattern':
         interactive_pattern_creator(args)
