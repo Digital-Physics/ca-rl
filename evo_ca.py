@@ -161,7 +161,7 @@ class EvolutionaryOptimizer:
         self.best_sequence = None
         self.best_fitness = -float('inf')
         self.best_history = []
-        self.overall_best = []  # list of (sequence, fitness)
+        self.overall_best = []  # list of (sequence, fitness, generation_index)
 
         # Statistics
         self.generation = 0
@@ -205,12 +205,34 @@ class EvolutionaryOptimizer:
     #     self.max_fitness_history.append(np.max(self.fitness_scores))
     #     self.diversity_history.append(self._calculate_diversity())
 
+    # def evaluate_population(self):
+    #     """Evaluate all sequences in the population."""
+    #     for i in range(self.population_size):
+    #         self.fitness_scores[i], _ = self.evaluate_sequence(self.population[i])
+
+    #         # Track current generation best
+    #         if self.fitness_scores[i] > self.best_fitness:
+    #             self.best_fitness = self.fitness_scores[i]
+    #             self.best_sequence = self.population[i].copy()
+
+    #     # Update statistics
+    #     self.avg_fitness_history.append(np.mean(self.fitness_scores))
+    #     self.max_fitness_history.append(np.max(self.fitness_scores))
+    #     self.diversity_history.append(self._calculate_diversity())
+
+    #     # --- Update both leaderboards ---
+    #     # Get top 5 of this generation
+    #     gen_top5 = self.get_top_sequences(k=5)
+
+    #     # Merge them into the overall leaderboard (bounded at 10 entries)
+    #     all_candidates = set(self.overall_best + gen_top5)
+    #     self.overall_best = sorted(all_candidates, key=lambda x: x[1], reverse=True)[:5]
+
     def evaluate_population(self):
         """Evaluate all sequences in the population."""
         for i in range(self.population_size):
             self.fitness_scores[i], _ = self.evaluate_sequence(self.population[i])
 
-            # Track current generation best
             if self.fitness_scores[i] > self.best_fitness:
                 self.best_fitness = self.fitness_scores[i]
                 self.best_sequence = self.population[i].copy()
@@ -221,12 +243,27 @@ class EvolutionaryOptimizer:
         self.diversity_history.append(self._calculate_diversity())
 
         # --- Update both leaderboards ---
-        # Get top 5 of this generation
         gen_top5 = self.get_top_sequences(k=5)
 
-        # Merge them into the overall leaderboard (bounded at 10 entries)
-        all_candidates = self.overall_best + gen_top5
-        self.overall_best = sorted(all_candidates, key=lambda x: x[1], reverse=True)[:5]
+        # Add generation index to top 5
+        gen_top5_with_gen = [(seq, fitness, self.generation) for seq, fitness in gen_top5]
+
+        # Combine with previous overall list
+        combined = self.overall_best + gen_top5_with_gen
+
+        # Remove duplicates by hashing sequence tuples
+        unique = {}
+        for seq, fitness, gen_idx in combined:
+            key = tuple(seq.tolist())
+            # Keep the earliest generation and highest fitness for duplicates
+            if key not in unique or fitness > unique[key][1]:
+                unique[key] = (seq, fitness, gen_idx)
+
+        # Sort unique entries by fitness descending
+        sorted_unique = sorted(unique.values(), key=lambda x: x[1], reverse=True)
+
+        # Keep top 5
+        self.overall_best = sorted_unique[:5]
 
 
     def _calculate_diversity(self):
@@ -448,12 +485,12 @@ def train_evolutionary(args):
         # ax_leaderboard.axis('off')
         leaderboard_text_gen = ax_leaderboard_gen.text(0.05, 0.95, '', va='top', fontsize=10, family='monospace',
                                                 bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
-        ax_leaderboard_gen.set_title('Top 5 (Current Generation)', fontweight='bold')
+        ax_leaderboard_gen.set_title('Top 5 (This Generation)', fontweight='bold')
         ax_leaderboard_gen.axis('off')
 
         leaderboard_text_all = ax_leaderboard_all.text(0.05, 0.95, '', va='top', fontsize=10, family='monospace',
                                                     bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.3))
-        ax_leaderboard_all.set_title('Top 5 (All Generations)', fontweight='bold')
+        ax_leaderboard_all.set_title('Top 5 (All-Time Unique)', fontweight='bold')
         ax_leaderboard_all.axis('off')
 
         
@@ -572,10 +609,17 @@ def train_evolutionary(args):
             leaderboard_text_gen.set_text(leaderboard_str_gen)
 
             # --- Update overall leaderboard ---
-            leaderboard_str_all = "LEADERBOARD (All):\n" + "=" * 30 + "\n"
-            for rank, (seq, fitness) in enumerate(optimizer.overall_best, 1):
+            # leaderboard_str_all = "LEADERBOARD (All):\n" + "=" * 30 + "\n"
+            # for rank, (seq, fitness) in enumerate(optimizer.overall_best, 1):
+            #     seq_str = ' '.join([action_labels[a] for a in seq])
+            #     leaderboard_str_all += f"#{rank}: {fitness:.2f}\n    {seq_str}\n"
+            # leaderboard_text_all.set_text(leaderboard_str_all)
+            
+            # --- Update overall leaderboard ---
+            leaderboard_str_all = "LEADERBOARD (All-Time):\n" + "=" * 30 + "\n"
+            for rank, (seq, fitness, gen_idx) in enumerate(optimizer.overall_best, 1):
                 seq_str = ' '.join([action_labels[a] for a in seq])
-                leaderboard_str_all += f"#{rank}: {fitness:.2f}\n    {seq_str}\n"
+                leaderboard_str_all += f"#{rank}: {fitness:.2f} (Gen {gen_idx})\n    {seq_str}\n"
             leaderboard_text_all.set_text(leaderboard_str_all)
 
             # Update info text
