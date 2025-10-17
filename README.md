@@ -50,7 +50,7 @@ uv run evo_ca.py train \
   --pattern-file custom_pattern_12x12.npy \
   --generations 500 \
   --population-size 100 \
-  --sequence-length 10 \
+  --steps 10 \
   --mutation-rate 0.1 \
   --live-plot
 ```

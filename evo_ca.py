@@ -144,10 +144,10 @@ class CAEnv:
 class EvolutionaryOptimizer:
     """Evolutionary algorithm to optimize action sequences."""
 
-    def __init__(self, env, sequence_length=10, population_size=100,
+    def __init__(self, env, steps=10, population_size=100,
                  elite_fraction=0.2, mutation_rate=0.1):
         self.env = env
-        self.sequence_length = sequence_length
+        self.steps = steps
         self.population_size = population_size
         self.elite_size = int(population_size * elite_fraction)
         self.mutation_rate = mutation_rate
@@ -161,6 +161,7 @@ class EvolutionaryOptimizer:
         self.best_sequence = None
         self.best_fitness = -float('inf')
         self.best_history = []
+        self.overall_best = []  # list of (sequence, fitness)
 
         # Statistics
         self.generation = 0
@@ -170,7 +171,7 @@ class EvolutionaryOptimizer:
 
     def _random_sequence(self):
         """Generate a random action sequence."""
-        return np.random.randint(0, self.num_actions, size=self.sequence_length)
+        return np.random.randint(0, self.num_actions, size=self.steps)
 
     def evaluate_sequence(self, sequence):
         """Evaluate fitness of an action sequence."""
@@ -186,12 +187,30 @@ class EvolutionaryOptimizer:
 
         return fitness, final_grid
 
+    # def evaluate_population(self):
+    #     """Evaluate all sequences in the population."""
+    #     for i in range(self.population_size):
+    #         self.fitness_scores[i], _ = self.evaluate_sequence(self.population[i])
+
+    #         # Track best solution           
+    #         if self.fitness_scores[i] > self.best_fitness:
+    #             self.best_fitness = self.fitness_scores[i]
+    #             self.best_sequence = self.population[i].copy()
+    #             # Track in overall leaderboard
+    #             self.overall_best.append((self.best_sequence.copy(), self.best_fitness))
+    #             self.overall_best = sorted(self.overall_best, key=lambda x: x[1], reverse=True)[:5]
+
+    #     # Update statistics
+    #     self.avg_fitness_history.append(np.mean(self.fitness_scores))
+    #     self.max_fitness_history.append(np.max(self.fitness_scores))
+    #     self.diversity_history.append(self._calculate_diversity())
+
     def evaluate_population(self):
         """Evaluate all sequences in the population."""
         for i in range(self.population_size):
             self.fitness_scores[i], _ = self.evaluate_sequence(self.population[i])
 
-            # Track best solution
+            # Track current generation best
             if self.fitness_scores[i] > self.best_fitness:
                 self.best_fitness = self.fitness_scores[i]
                 self.best_sequence = self.population[i].copy()
@@ -201,10 +220,24 @@ class EvolutionaryOptimizer:
         self.max_fitness_history.append(np.max(self.fitness_scores))
         self.diversity_history.append(self._calculate_diversity())
 
+        # --- Update both leaderboards ---
+        # Get top 5 of this generation
+        gen_top5 = self.get_top_sequences(k=5)
+
+        # Merge them into the overall leaderboard (bounded at 10 entries)
+        all_candidates = self.overall_best + gen_top5
+        self.overall_best = sorted(all_candidates, key=lambda x: x[1], reverse=True)[:5]
+
+
     def _calculate_diversity(self):
         """Calculate population diversity (unique sequences)."""
         unique = len(set(tuple(seq) for seq in self.population))
         return unique / self.population_size
+
+    def get_top_sequences(self, k=5):
+        """Get top k sequences by fitness."""
+        top_indices = np.argsort(self.fitness_scores)[-k:][::-1]
+        return [(self.population[i].copy(), self.fitness_scores[i]) for i in top_indices]
 
     def select_parents(self):
         """Select elite individuals for breeding."""
@@ -213,14 +246,14 @@ class EvolutionaryOptimizer:
 
     def crossover(self, parent1, parent2):
         """Single-point crossover between two parents."""
-        crossover_point = np.random.randint(1, self.sequence_length)
+        crossover_point = np.random.randint(1, self.steps)
         child = np.concatenate([parent1[:crossover_point], parent2[crossover_point:]])
         return child
 
     def mutate(self, sequence):
         """Mutate a sequence by randomly changing some actions."""
         mutated = sequence.copy()
-        for i in range(self.sequence_length):
+        for i in range(self.steps):
             if np.random.random() < self.mutation_rate:
                 mutated[i] = np.random.randint(0, self.num_actions)
         return mutated
@@ -316,7 +349,7 @@ def train_evolutionary(args):
     print("--- Starting Evolutionary Training ---")
 
     env = CAEnv(grid_size=args.grid_size, rules_name=args.rules,
-                reward_type='pattern', max_steps=args.sequence_length)
+                reward_type='pattern', max_steps=args.steps)
 
     # Load pattern
     if args.pattern_file and os.path.exists(args.pattern_file):
@@ -326,7 +359,7 @@ def train_evolutionary(args):
 
     optimizer = EvolutionaryOptimizer(
         env=env,
-        sequence_length=args.sequence_length,
+        steps=args.steps,
         population_size=args.population_size,
         elite_fraction=args.elite_fraction,
         mutation_rate=args.mutation_rate
@@ -336,8 +369,8 @@ def train_evolutionary(args):
     if args.live_plot is not None:
         action_images = create_action_images(optimizer.num_actions, size=20)
 
-        fig = plt.figure(figsize=(18, 12))
-        gs = fig.add_gridspec(3, 4, hspace=0.5, wspace=0.4)
+        fig = plt.figure(figsize=(20, 12))
+        gs = fig.add_gridspec(3, 5, hspace=0.5, wspace=0.4)
 
         # Grid displays
         ax_best = fig.add_subplot(gs[0, 0])
@@ -345,13 +378,17 @@ def train_evolutionary(args):
         ax_current = fig.add_subplot(gs[0, 2])
 
         # Metrics
-        ax_fitness = fig.add_subplot(gs[0, 3])
+        ax_fitness = fig.add_subplot(gs[0, 3:])
         ax_diversity = fig.add_subplot(gs[1, 0])
         ax_actions = fig.add_subplot(gs[1, 1])
         ax_dist = fig.add_subplot(gs[1, 2])
-        ax_fitness_dist = fig.add_subplot(gs[1, 3])
-        ax_info = fig.add_subplot(gs[2, 0:2])
-        ax_seq_imgs = fig.add_subplot(gs[2, 2:])
+        ax_fitness_dist = fig.add_subplot(gs[1, 3:])
+        # ax_leaderboard = fig.add_subplot(gs[2, 0:2])
+        ax_leaderboard_gen = fig.add_subplot(gs[2, 0])
+        ax_leaderboard_all = fig.add_subplot(gs[2, 1])
+        ax_info = fig.add_subplot(gs[2, 2:4])
+
+        ax_seq_imgs = fig.add_subplot(gs[2, 4])
 
         fig.suptitle('Evolutionary Algorithm Progress', fontsize=16, fontweight='bold')
 
@@ -370,7 +407,7 @@ def train_evolutionary(args):
 
         current_img = ax_current.imshow(np.zeros((env.grid_size, env.grid_size)),
                                        cmap='binary', vmin=0, vmax=1, interpolation='nearest')
-        ax_current.set_title('Generation Sample', fontweight='bold')
+        ax_current.set_title(f"Generation Sample (Step {args.steps})", fontweight='bold')
         ax_current.set_xticks([])
         ax_current.set_yticks([])
 
@@ -404,12 +441,28 @@ def train_evolutionary(args):
         ax_dist.set_title('Action Usage', fontweight='bold')
         ax_dist.set_ylabel('Frequency')
         
+        # Leaderboard
+        # leaderboard_text = ax_leaderboard.text(0.05, 0.95, '', va='top', fontsize=10, family='monospace',
+        #                                        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
+        # ax_leaderboard.set_title('Top 5 Sequences', fontweight='bold')
+        # ax_leaderboard.axis('off')
+        leaderboard_text_gen = ax_leaderboard_gen.text(0.05, 0.95, '', va='top', fontsize=10, family='monospace',
+                                                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
+        ax_leaderboard_gen.set_title('Top 5 (Current Generation)', fontweight='bold')
+        ax_leaderboard_gen.axis('off')
+
+        leaderboard_text_all = ax_leaderboard_all.text(0.05, 0.95, '', va='top', fontsize=10, family='monospace',
+                                                    bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.3))
+        ax_leaderboard_all.set_title('Top 5 (All Generations)', fontweight='bold')
+        ax_leaderboard_all.axis('off')
+
+        
         # New Action sequence visualization
-        ax_seq_imgs.set_title('Best Action Sequence', fontweight='bold')
+        ax_seq_imgs.set_title('Best Sequence', fontweight='bold')
         ax_seq_imgs.axis('off')
 
         # Info text
-        info_text = ax_info.text(0.05, 0.95, '', va='top', fontsize=11, family='monospace')
+        info_text = ax_info.text(0.05, 0.95, '', va='top', fontsize=10, family='monospace')
         ax_info.set_title('Statistics', fontweight='bold')
         ax_info.axis('off')
 
@@ -417,7 +470,7 @@ def train_evolutionary(args):
 
     # Training loop
     print(f"\nTraining for {args.generations} generations...")
-    print(f"Population size: {args.population_size}, Sequence length: {args.sequence_length}")
+    print(f"Population size: {args.population_size}, Sequence length: {args.steps}")
     print(f"Elite fraction: {args.elite_fraction}, Mutation rate: {args.mutation_rate}\n")
 
     for generation in tqdm(range(args.generations), desc="Evolution"):
@@ -452,7 +505,7 @@ def train_evolutionary(args):
             # Action sequence bar chart
             ax_actions.clear()
             colors = [action_colors[a] for a in optimizer.best_sequence]
-            ax_actions.bar(range(args.sequence_length), optimizer.best_sequence, color=colors)
+            ax_actions.bar(range(args.steps), optimizer.best_sequence, color=colors)
             ax_actions.set_title('Best Action Sequence', fontweight='bold')
             ax_actions.set_xlabel('Step')
             ax_actions.set_ylabel('Action ID')
@@ -461,7 +514,7 @@ def train_evolutionary(args):
 
             # New: Action sequence image visualization
             ax_seq_imgs.clear()
-            ax_seq_imgs.set_title('Best Sequence Visualization', fontweight='bold')
+            ax_seq_imgs.set_title('Best Sequence', fontweight='bold')
             ax_seq_imgs.axis('off')
             best_seq = optimizer.best_sequence
             if best_seq is not None and len(best_seq) > 0:
@@ -501,6 +554,30 @@ def train_evolutionary(args):
                 if best_action_counts[i] > 0:
                     bar.set_color('coral')
 
+            # Update leaderboard
+            # top_sequences = optimizer.get_top_sequences(k=5)
+            # leaderboard_str = "LEADERBOARD (Top 5):\n" + "=" * 40 + "\n"
+            # for rank, (seq, fitness) in enumerate(top_sequences, 1):
+            #     seq_str = ' '.join([action_labels[a] for a in seq])
+            #     leaderboard_str += f"#{rank}: Fitness {fitness:.2f}\n"
+            #     leaderboard_str += f"    {seq_str}\n"
+            # leaderboard_text.set_text(leaderboard_str)
+
+            # --- Update generation leaderboard ---
+            top_sequences = optimizer.get_top_sequences(k=5)
+            leaderboard_str_gen = "LEADERBOARD (Gen):\n" + "=" * 30 + "\n"
+            for rank, (seq, fitness) in enumerate(top_sequences, 1):
+                seq_str = ' '.join([action_labels[a] for a in seq])
+                leaderboard_str_gen += f"#{rank}: {fitness:.2f}\n    {seq_str}\n"
+            leaderboard_text_gen.set_text(leaderboard_str_gen)
+
+            # --- Update overall leaderboard ---
+            leaderboard_str_all = "LEADERBOARD (All):\n" + "=" * 30 + "\n"
+            for rank, (seq, fitness) in enumerate(optimizer.overall_best, 1):
+                seq_str = ' '.join([action_labels[a] for a in seq])
+                leaderboard_str_all += f"#{rank}: {fitness:.2f}\n    {seq_str}\n"
+            leaderboard_text_all.set_text(leaderboard_str_all)
+
             # Update info text
             info_str = (
                 f"Generation: {generation + 1}/{args.generations}\n"
@@ -512,14 +589,6 @@ def train_evolutionary(args):
 
             if generation == args.generations - 1:
                 info_str += f"\nFinal Score: {optimizer.best_fitness:.2f}\n"
-
-            info_str += f"\nBest Sequence (Symbols):\n"
-            
-            # Show best action sequence with labels
-            for i, action in enumerate(optimizer.best_sequence):
-                if i % 10 == 0 and i > 0:
-                    info_str += "\n"
-                info_str += f"{action_labels[action]:>3} "
 
             info_text.set_text(info_str)
 
@@ -961,7 +1030,7 @@ if __name__ == '__main__':
     # Training
     train_parser = subparsers.add_parser('train', help='Run evolutionary training')
     train_parser.add_argument('--generations', type=int, default=500, help='Number of generations')
-    train_parser.add_argument('--sequence-length', type=int, default=10, help='Length of action sequences')
+    train_parser.add_argument('--steps', type=int, default=10, help='Length of action sequences')
     train_parser.add_argument('--population-size', type=int, default=100, help='Population size')
     train_parser.add_argument('--elite-fraction', type=float, default=0.2, help='Fraction of elite individuals')
     train_parser.add_argument('--mutation-rate', type=float, default=0.1, help='Mutation probability per action')
