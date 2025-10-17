@@ -4,8 +4,6 @@ evo_ca.py
 
 Evolutionary Algorithm for Cellular Automata Pattern Matching
 Uses genetic algorithms to evolve sequences of actions that create target patterns.
-
-Author: Enhanced by Claude with Evolutionary Algorithm
 """
 
 import numpy as np
@@ -370,7 +368,7 @@ def train_evolutionary(args):
 
         current_img = ax_current.imshow(np.zeros((env.grid_size, env.grid_size)),
                                        cmap='binary', vmin=0, vmax=1, interpolation='nearest')
-        ax_current.set_title('Generation Sample', fontweight='bold')
+        ax_current.set_title('Current Generation Sample', fontweight='bold')
         ax_current.set_xticks([])
         ax_current.set_yticks([])
 
@@ -493,7 +491,7 @@ def train_evolutionary(args):
             ax_dist.set_title('Action Usage', fontweight='bold')
             ax_dist.set_ylabel('Frequency')
             ax_dist.set_xticks(range(optimizer.num_actions))
-            ax_dist.set_xticklabels(action_labels, fontsize=7, rotation=45)
+            ax_dist.set_xticklabels(action_labels, fontsize=5, rotation=45)
 
             # Highlight best sequence actions
             best_action_counts = np.bincount(optimizer.best_sequence, minlength=optimizer.num_actions)
@@ -507,14 +505,10 @@ def train_evolutionary(args):
                 f"Best Fitness: {optimizer.best_fitness:.2f}\n"
                 f"Avg Fitness: {optimizer.avg_fitness_history[-1]:.2f}\n"
                 f"Diversity: {optimizer.diversity_history[-1]:.2%}\n"
-                f"Perfect Matches: {np.sum(optimizer.fitness_scores >= 200)}\n"
+                f"Perfect Matches: {np.sum(optimizer.fitness_scores >= 200)}\n\n"
+                f"Best Sequence (IDs):\n"
             )
 
-            if generation == args.generations - 1:
-                info_str += f"\nFinal Score: {optimizer.best_fitness:.2f}\n"
-
-            info_str += f"\nBest Sequence (Symbols):\n"
-            
             # Show best action sequence with labels
             for i, action in enumerate(optimizer.best_sequence):
                 if i % 10 == 0 and i > 0:
@@ -697,9 +691,6 @@ def run_demo(args):
                 f"Match: {match_pct:.1%}\n"
                 f"Alive cells: {np.sum(state)}"
             )
-            if frame == len(sequence):
-                info_str += f"\n\nFinal Score: {fitness:.2f}"
-
             info_text.set_text(info_str)
 
         return [grid_img, agent_patch] + list(bars) + [info_text]
@@ -760,7 +751,7 @@ def interactive_pattern_creator(args):
     plt.show(block=True)
 
 
-def run_demo_manual(args):
+def run_manual(args):
     """Manual play mode with keyboard control and pattern saving."""
     import matplotlib as mpl
     mpl.rcParams['keymap.fullscreen'] = []
@@ -808,7 +799,7 @@ def run_demo_manual(args):
                           color='steelblue', alpha=0.7)
     ax_actions.set_ylim([0, 1])
     ax_actions.set_xticks(range(len(action_labels)))
-    ax_actions.set_xticklabels(action_labels, fontsize=8)
+    ax_actions.set_xticklabels(action_labels, fontsize=5)
     ax_actions.set_ylabel('Usage')
     ax_actions.set_title('Action History', fontweight='bold')
     ax_actions.grid(axis='y', alpha=0.3)
@@ -835,11 +826,6 @@ def run_demo_manual(args):
         if key == 'q' or key == 'escape':
             plt.close()
             return
-        
-        if step_counter[0] >= args.steps and key not in ['c', 'q', 'escape']:
-            metrics_text.set_text(f"{metrics_text.get_text().split('Controls:')[0]}\nMax steps reached!\nPress 'C' to clear or 'Q' to quit.")
-            fig.canvas.draw_idle()
-            return
 
         if key == 's':
             filename = f'custom_pattern_{args.grid_size}x{args.grid_size}.npy'
@@ -854,12 +840,12 @@ def run_demo_manual(args):
             action_history.clear()
             grid_img.set_data(env.ca_grid)
             agent_patch.set_xy((env.agent_x - 1.5, env.agent_y - 1.5))
-            title_text.set_text(f"Step: 0/{args.steps} | Manual Mode")
-            
+            title_text.set_text("Step: 0 | Manual Mode")
+
             # Reset bars
             for bar in bars:
                 bar.set_height(0)
-            
+
             metrics_text.set_text("Grid cleared. Ready for new sequence.")
             fig.canvas.draw_idle()
             return
@@ -891,41 +877,42 @@ def run_demo_manual(args):
         # Calculate metrics
         alive_count = int(np.sum(env.ca_grid))
         density = float(np.mean(env.ca_grid))
-        
+
         metrics_str = (
-            f"Step: {step_counter[0]}/{args.steps}\n"
+            f"Step: {step_counter[0]}\n"
             f"Action: {env.actions[action]}\n"
             f"Alive cells: {alive_count}\n"
-            f"Density: {density:.3f}\n"
+            f"Density: {density:.3f}\n\n"
+            f"Controls:\n"
+            f"Arrow Keys/Space: Move/Wait\n"
+            f"0-F: Write patterns\n"
+            f"S: Save current grid\n"
+            f"C: Clear grid\n"
+            f"Q: Quit"
         )
-        
-        title_str = f"Step: {step_counter[0]}/{args.steps} | Manual Mode"
 
         if env.target_pattern is not None:
             fitness = env.calculate_fitness(env.ca_grid)
             match_pct = np.mean(env.ca_grid == env.target_pattern)
-            metrics_str += (
+            metrics_str = (
+                f"Step: {step_counter[0]}\n"
+                f"Action: {env.actions[action]}\n"
+                f"Alive cells: {alive_count}\n"
+                f"Density: {density:.3f}\n"
                 f"Fitness: {fitness:.2f}\n"
-                f"Match: {match_pct:.1%}\n"
-            )
-            title_str = f"Step: {step_counter[0]}/{args.steps} | Fitness: {fitness:.2f} | Match: {match_pct:.1%}"
-            if step_counter[0] == args.steps:
-                metrics_str += f"\nFinal Score: {fitness:.2f}\n"
-        
-        if step_counter[0] >= args.steps:
-            metrics_str += "\nMax steps reached!\nPress 'C' to clear."
-        else:
-            metrics_str += (
-                f"\nControls:\n"
+                f"Match: {match_pct:.1%}\n\n"
+                f"Controls:\n"
                 f"Arrow Keys/Space: Move/Wait\n"
                 f"0-F: Write patterns\n"
                 f"S: Save grid as pattern\n"
                 f"C: Clear grid\n"
                 f"Q: Quit"
             )
+            title_text.set_text(f"Step: {step_counter[0]} | Fitness: {fitness:.2f} | Match: {match_pct:.1%}")
+        else:
+            title_text.set_text(f"Step: {step_counter[0]} | Manual Mode")
 
         metrics_text.set_text(metrics_str)
-        title_text.set_text(title_str)
         fig.canvas.draw_idle()
 
     fig.canvas.mpl_connect('key_press_event', on_key)
@@ -937,18 +924,6 @@ def run_demo_manual(args):
     print("- S: Save current grid state as pattern file")
     print("- C: Clear grid")
     print("- Q: Quit\n")
-    
-    # Initial text
-    metrics_text.set_text(
-        f"Step: 0/{args.steps}\n\n"
-        f"Controls:\n"
-        f"Arrow Keys/Space: Move/Wait\n"
-        f"0-F: Write patterns\n"
-        f"S: Save grid as pattern\n"
-        f"C: Clear grid\n"
-        f"Q: Quit"
-    )
-
 
     plt.show(block=True)
 
@@ -984,7 +959,7 @@ if __name__ == '__main__':
     manual_parser.add_argument('--grid-size', type=int, default=12)
     manual_parser.add_argument('--rules', type=str, default='conway', choices=['conway', 'seeds', 'maze'])
     manual_parser.add_argument('--pattern-file', type=str, default=None, help='Target pattern file (optional)')
-    manual_parser.add_argument('--steps', type=int, default=10, help='Maximum steps before reset is required')
+    manual_parser.add_argument('--steps', type=int, default=100, help='Maximum steps')
 
     # Pattern Creator
     pattern_parser = subparsers.add_parser('create_pattern', help='Interactive pattern creator')
@@ -997,6 +972,6 @@ if __name__ == '__main__':
     elif args.mode == 'demo':
         run_demo(args)
     elif args.mode == 'manual':
-        run_demo_manual(args)
+        run_manual(args)
     elif args.mode == 'create_pattern':
         interactive_pattern_creator(args)
