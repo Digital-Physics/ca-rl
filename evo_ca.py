@@ -394,6 +394,8 @@ def train_evolutionary(args):
     """Main evolutionary training loop with enhanced 4-row visualization."""
     print("--- Starting Evolutionary Training ---")
 
+    seq_count = 21**args.steps
+
     env = CAEnv(grid_size=args.grid_size, rules_name=args.rules,
                 reward_type='pattern', max_steps=args.steps)
 
@@ -638,7 +640,9 @@ def train_evolutionary(args):
                 f"Avg Fitness: {optimizer.avg_fitness_history[-1]:.2f}\n"
                 f"Diversity: {optimizer.diversity_history[-1]:.2%}\n"
                 f"Perfect Matches: {np.sum(optimizer.fitness_scores >= 200)}\n"
-                f"Unique Sequences Found: {len(optimizer.unique_sequences_seen)}\n"
+                f"Unique Sequences Seen: {len(optimizer.unique_sequences_seen)}\n"
+                f"Total Number of Sequences: {seq_count}\n"
+                f"Percentage of Sequences Explored: {100*len(optimizer.unique_sequences_seen)/seq_count:.8f} %\n"
             )
             info_text.set_text(info_str)
 
